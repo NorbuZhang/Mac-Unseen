@@ -41,10 +41,13 @@ If you download a built app, unzip it and move `Mac Unseen.app` to `Applications
 
 Because community builds may not be notarized, macOS can block the first launch. If that happens:
 
+<img width="265" height="290" alt="image" src="https://github.com/user-attachments/assets/42c05292-a2bb-4aca-b941-195d020b4308" />
+
 1. Open `System Settings`.
 2. Go to `Privacy & Security`.
 3. Scroll to the security message for Mac Unseen.
 4. Choose `Open Anyway`, then confirm the next launch prompt.
+<img width="1442" height="940" alt="image" src="https://github.com/user-attachments/assets/7648f782-7a78-4478-b6da-64da43eda9cc" />
 
 You can also try right-clicking the app and choosing `Open`, but newer macOS versions may still ask you to approve it in `Privacy & Security`.
 
