@@ -28,7 +28,7 @@ Some readings depend on model support. Apple does not document several of the in
 
 ## Download Options
 
-Release builds may be offered in two variants:
+The current version requires a Python3 environment to run. As a result, release builds may be offered in two variants:
 
 - Standard build: smaller download. It uses the Python runtime already available on the Mac to run the hidden-sensor collector.
 - Python-included build: larger download. It bundles a Python framework for Macs where the required Python runtime is missing, restricted, or unreliable.
