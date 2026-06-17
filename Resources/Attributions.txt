@@ -1,0 +1,80 @@
+Mac Unseen third-party notices
+==============================
+
+Apple SPU sensor research
+-------------------------
+The SPU sensor helper contains adapted IOKit access patterns and sensor
+report layouts from olvvier/apple-silicon-accelerometer.
+
+Copyright (c) 2026 olvvier
+License: MIT
+Source: https://github.com/olvvier/apple-silicon-accelerometer
+Revision: 203685640287449eaecf521c24d1f5e52486ecb7
+
+Trackpad private API reference
+------------------------------
+The MultitouchSupport bridge contains adapted data structures and private
+API declarations from OpenMultitouchSupport.
+
+Copyright (c) 2019 TakutoNakamura
+License: MIT
+Source: https://github.com/Kyome22/OpenMultitouchSupport
+Revision: 15c6bb0c6a2d2858559493a28ab23f7ac58648a3
+
+iSMC
+----
+Mac Unseen bundles the arm64 slice of the official iSMC v0.16.5
+command-line binary. The packaging process removes unused architectures
+and debugging symbols but does not change program behavior.
+
+Copyright (c) Daniel Korunic and contributors
+License: GNU General Public License v3.0
+Source: https://github.com/dkorunic/iSMC
+Revision: 9b21ebd2d2a5e8e396e64e7142570c955638a600
+
+The iSMC v0.16.5 project source is included under Resources/Source.
+See OPEN_SOURCE_COMPLIANCE.md for the additional corresponding-source
+condition that applies before commercial redistribution.
+Mac Unseen also builds a small read-only fan-speed probe from iSMC's GPL
+AppleSMC transport. Its source, transport source, license, and standalone
+build instructions are included under Resources/Source/FanSpeedProbe.
+
+iSMC's statically linked runtime dependency notices are included under
+Resources/Licenses/iSMC-Dependencies.
+
+smartmontools
+-------------
+Mac Unseen bundles the arm64 Homebrew bottle build of smartctl 7.5 to read
+standard NVMe SMART lifetime counters with administrator authorization.
+
+Copyright (c) smartmontools contributors
+License: GNU General Public License v2.0 or later
+Source: https://github.com/smartmontools/smartmontools
+Revision: RELEASE_7_5
+
+The official smartmontools 7.5 source archive is included under
+Resources/Source. Its SHA-256 is
+690b83ca331378da9ea0d9d61008c4b22dde391387b9bbad7f29387f2595f76e.
+Archive source:
+https://downloads.sourceforge.net/project/smartmontools/smartmontools/7.5/
+The bundled binary was obtained from Homebrew smartmontools 7.5 bottle
+revision 0 and then stripped of debugging symbols during packaging.
+
+Python runtime
+--------------
+The Python Runtime build bundles Python 3.14 to run the hidden-sensor helper
+on Macs where a suitable system Python is unavailable.
+
+Copyright (c) Python Software Foundation and contributors
+License: Python Software Foundation License Version 2 and other bundled
+notices as described in Python's LICENSE.txt
+Source: https://www.python.org/
+
+The complete Python license text is included under Resources/Licenses as
+Python-3.14-PSF.txt in Python Runtime builds.
+
+Private API notice
+------------------
+Apple does not document the SPU and MultitouchSupport interfaces used here.
+They may change in future macOS releases. Mac Unseen only reads sensor
+reports and does not change fan curves, power limits, or hardware settings.

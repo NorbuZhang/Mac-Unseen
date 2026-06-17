@@ -1,0 +1,22 @@
+FanSpeedProbe corresponding source
+==================================
+
+License: GNU General Public License version 3 only
+
+Files:
+- fan_speed_probe.c: Mac Unseen fan-speed JSON command-line frontend
+- smc.c and smc.h: AppleSMC transport from dkorunic/iSMC revision
+  9b21ebd2d2a5e8e396e64e7142570c955638a600
+- LICENSE: complete GPL version 3 text
+
+Build on macOS with the Apple command-line tools installed:
+
+    xcrun clang -Os \
+      fan_speed_probe.c smc.c \
+      -framework IOKit \
+      -framework CoreFoundation \
+      -o FanSpeedProbe
+
+Mac Unseen invokes this program as a separate process and reads its JSON
+standard output. No signing key or non-public build tool is required to
+compile or replace it.
