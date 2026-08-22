@@ -5,6 +5,7 @@
 Mac Unseen 是一款给 Apple Silicon Mac 使用的 macOS 硬件遥测工具。它把系统信息、电池与供电、存储健康、网络状态、触控板触摸数据，以及一些隐藏的只读传感器读数放在同一个原生 SwiftUI 应用里。
 
 这个应用的定位是“查看”，不是“控制硬件”。它不会修改风扇曲线、功耗限制、屏幕亮度、键盘亮度或系统设置，也不会上传遥测数据。
+<img width="2438" height="1556" alt="image" src="https://github.com/user-attachments/assets/589d2ae9-9a76-413c-913d-1fb6630d0850" />
 
 ## 功能
 
@@ -19,6 +20,10 @@ Mac Unseen 是一款给 Apple Silicon Mac 使用的 macOS 硬件遥测工具。�
 
 部分读数取决于具体机型。这里用到的一些接口 Apple 没有公开文档，所以不同 macOS 版本或不同 Mac 上可能会缺少某些数据，也可能出现变化。
 我也在这个小工具中埋下了点有趣的小彩蛋，可以尝试探索一下。
+<img width="2438" height="1556" alt="image" src="https://github.com/user-attachments/assets/28342cf7-7bf2-4a2b-b800-2f43dcdb9155" /><img width="2438" height="1556" alt="image" src="https://github.com/user-attachments/assets/48321922-7116-4edb-9f5b-87750bb9c8ed" /><img width="2438" height="1556" alt="image" src="https://github.com/user-attachments/assets/578fc39b-e4f2-4418-a3f2-abcb43409c82" />
+
+
+
 
 ## 设计风格
 - **强调色设计**（默认）：在卡片背景、标题强调线、边框和指标条中使用各功能自己的颜色，让不同功能分区更容易区分。
