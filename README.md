@@ -20,6 +20,11 @@ The app is designed for inspection, not hardware control. It does not change fan
 
 Some readings depend on model support. Apple does not document several of the interfaces used here, so values may be missing or change across macOS releases.
 
+## Detail-area design
+
+- **Accent Design** (default): uses each feature's tint in card surfaces, header accents, borders, and metric indicators. This makes functional sections easier to distinguish at a glance.
+- **Standard Design**: uses the quieter material and neutral card treatment for users who prefer lower visual emphasis.
+
 ## Requirements
 
 - Apple Silicon Mac
