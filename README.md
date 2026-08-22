@@ -7,6 +7,9 @@ Mac Unseen is a macOS hardware telemetry app for Apple Silicon Macs. It brings t
 
 The app is designed for inspection, not hardware control. It does not change fan curves, power limits, display brightness, keyboard brightness, or system settings, and it does not upload telemetry.
 
+<img width="1280" height="856" alt="image" src="https://github.com/user-attachments/assets/52edfa9b-ab73-4547-b5d3-7e7d15fe4345" />
+
+
 ## Features
 
 - System overview with live status for the Mac, battery, storage, network, trackpad, and hidden-sensor collector.
@@ -20,10 +23,16 @@ The app is designed for inspection, not hardware control. It does not change fan
 
 Some readings depend on model support. Apple does not document several of the interfaces used here, so values may be missing or change across macOS releases.
 
+<img width="1280" height="846" alt="image" src="https://github.com/user-attachments/assets/e4d9f803-294b-4b4d-b2d0-4f8e0d635e17" /> <img width="2232" height="1556" alt="image" src="https://github.com/user-attachments/assets/03151b3c-0560-43aa-8182-7543397fdc05" /><img width="2232" height="1556" alt="image" src="https://github.com/user-attachments/assets/50b0ebba-1af2-4699-8f63-c112b41bd344" />
+
+
+
+
 ## Detail-area design
 
 - **Accent Design** (default): uses each feature's tint in card surfaces, header accents, borders, and metric indicators. This makes functional sections easier to distinguish at a glance.
 - **Standard Design**: uses the quieter material and neutral card treatment for users who prefer lower visual emphasis.
+
 
 ## Requirements
 
