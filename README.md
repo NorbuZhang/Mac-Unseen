@@ -12,7 +12,6 @@ The app is designed for inspection, not hardware control. It does not change fan
 
 ## Features
 
-- System overview with live status for the Mac, battery, storage, network, trackpad, and hidden-sensor collector.
 - Motion readings from internal Apple Silicon sensors, including accelerometer, gyroscope, orientation, vibration level, and adjustable sample rate.
 - Display angle, ambient light, and raw spectral channel readings where the Mac exposes them.
 - Trackpad touch stream with position, contact area, density, and relative pressure values.
