@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct Sparkline: View {
@@ -80,6 +78,17 @@ func formatDuration(_ seconds: TimeInterval) -> String {
 }
 
 func batteryHealth(_ battery: BatterySnapshot) -> String {
+    if let design = battery.designCapacity,
+       let qmax = battery.qmaxCapacity,
+       design > 0 {
+        let uncappedHealth = qmax / design * 100
+        if uncappedHealth > 100 {
+            return format(uncappedHealth, digits: 1)
+        }
+    }
+    if let systemHealth = battery.healthPercentage {
+        return format(systemHealth, digits: 1)
+    }
     guard let design = battery.designCapacity,
           let maximum = battery.maximumCapacity,
           design > 0

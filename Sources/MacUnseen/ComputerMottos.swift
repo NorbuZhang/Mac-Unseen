@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 enum ComputerMottos {
     private static let curated = """
     世界上有 10 种人：懂二进制的，和不懂的

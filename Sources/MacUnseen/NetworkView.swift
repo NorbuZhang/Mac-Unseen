@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct NetworkView: View {
@@ -11,8 +9,8 @@ struct NetworkView: View {
 
     var body: some View {
         Page(
-            title: "网络与接口",
-            subtitle: "当前 IP、Wi-Fi 协议、网络流量和 USB-C / 雷雳连接状态"
+            title: "网络",
+            subtitle: "当前 IP、Wi-Fi 协议和累计网络流量"
         ) {
             Card(
                 title: "网络状态",
@@ -128,66 +126,6 @@ struct NetworkView: View {
                 }
             }
 
-            Card(
-                title: "USB-C 与雷雳接口",
-                symbol: "cable.connector",
-                tint: .indigo,
-                info: "断开时显示的是端口能力上限；连接后显示系统实际识别到的设备和报告速度。仅凭 40 Gb/s 有时无法可靠区分雷雳 3、雷雳 4 与 USB4，因此不会强行猜测版本。"
-            ) {
-                if store.network.ports.isEmpty {
-                    Text(tr("未读取到 USB-C / 雷雳端口状态。"))
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.network.ports) { port in
-                        ConnectionStatusRow(
-                            title: port.name,
-                            connected: port.connected,
-                            subtitle: port.connected
-                                ? emptyFallback(port.deviceName, fallback: "已连接设备")
-                                : "未连接设备",
-                            trailing: [port.protocolName, port.speed]
-                                .filter { !$0.isEmpty }
-                                .joined(separator: " · ")
-                        )
-                        if port.id != store.network.ports.last?.id {
-                            SoftDivider()
-                        }
-                    }
-                }
-            }
-
-            Card(
-                title: "已连接外设",
-                symbol: "externaldrive.connected.to.line.below",
-                tint: .purple
-            ) {
-                if store.network.peripherals.isEmpty {
-                    Text(tr("当前没有通过 USB 或雷雳识别到外接设备。"))
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.network.peripherals) { device in
-                        ConnectionStatusRow(
-                            title: device.name,
-                            connected: true,
-                            subtitle: emptyFallback(
-                                device.vendor,
-                                fallback: device.protocolName
-                            ),
-                            trailing: [
-                                device.protocolName,
-                                device.speed,
-                                device.power,
-                            ]
-                                .filter { !$0.isEmpty }
-                                .joined(separator: " · ")
-                        )
-                        if device.id != store.network.peripherals.last?.id {
-                            SoftDivider()
-                        }
-                    }
-                }
-            }
-
             HardwareUpdatedLabel(date: store.network.updatedAt)
         }
     }
@@ -254,5 +192,74 @@ private struct ConnectionStatusRow: View {
                 .multilineTextAlignment(.trailing)
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct PortsView: View {
+    @EnvironmentObject private var store: SensorStore
+    var body: some View {
+        Page(title: "端口与外设", subtitle: "USB-C、雷雳连接状态与外接设备") {
+            Card(
+                title: "USB-C 与雷雳接口",
+                symbol: "cable.connector",
+                tint: .indigo,
+                info: "断开时显示的是端口能力上限；连接后显示系统实际识别到的设备和报告速度。仅凭 40 Gb/s 有时无法可靠区分雷雳 3、雷雳 4 与 USB4，因此不会强行猜测版本。"
+            ) {
+                if store.network.ports.isEmpty {
+                    Text(tr("未读取到 USB-C / 雷雳端口状态。"))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.network.ports) { port in
+                        ConnectionStatusRow(
+                            title: port.name,
+                            connected: port.connected,
+                            subtitle: port.connected
+                                ? emptyFallback(port.deviceName, fallback: "已连接设备")
+                                : "未连接设备",
+                            trailing: [port.protocolName, port.speed]
+                                .filter { !$0.isEmpty }
+                                .joined(separator: " · ")
+                        )
+                        if port.id != store.network.ports.last?.id {
+                            SoftDivider()
+                        }
+                    }
+                }
+            }
+
+            Card(
+                title: "已连接外设",
+                symbol: "externaldrive.connected.to.line.below",
+                tint: .purple
+            ) {
+                if store.network.peripherals.isEmpty {
+                    Text(tr("当前没有通过 USB 或雷雳识别到外接设备。"))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.network.peripherals) { device in
+                        ConnectionStatusRow(
+                            title: device.name,
+                            connected: true,
+                            subtitle: emptyFallback(
+                                device.vendor,
+                                fallback: device.protocolName
+                            ),
+                            trailing: [
+                                device.protocolName,
+                                device.speed,
+                                device.power,
+                            ]
+                                .filter { !$0.isEmpty }
+                                .joined(separator: " · ")
+                        )
+                        if device.id != store.network.peripherals.last?.id {
+                            SoftDivider()
+                        }
+                    }
+                }
+            }
+
+            HardwareUpdatedLabel(date: store.network.updatedAt)
+        }
     }
 }

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import Darwin
 import Foundation
 import IOKit
@@ -18,7 +16,7 @@ enum SystemReader {
             snapshot.processorCount = ProcessInfo.processInfo.processorCount
             snapshot.memoryTotal = Double(ProcessInfo.processInfo.physicalMemory)
         }
-        snapshot.memoryUsed = memoryUsed(total: snapshot.memoryTotal)
+        snapshot.memoryUsed = PerformanceReader.memory().used ?? previous.memoryUsed
         snapshot.uptime = ProcessInfo.processInfo.systemUptime
 
         var loads = [Double](repeating: 0, count: 3)
@@ -55,6 +53,7 @@ enum SystemReader {
     static func readBattery(
         preserving previous: BatterySnapshot = BatterySnapshot(),
         includeStatic: Bool = true,
+        includeMedium: Bool = true,
         includeSlow: Bool = true
     ) -> BatterySnapshot {
         var snapshot = previous
@@ -67,142 +66,214 @@ enum SystemReader {
         }
         defer { IOObjectRelease(service) }
 
-        var unmanagedProperties: Unmanaged<CFMutableDictionary>?
-        guard IORegistryEntryCreateCFProperties(
-            service,
-            &unmanagedProperties,
-            kCFAllocatorDefault,
-            0
-        ) == KERN_SUCCESS,
-        let properties = unmanagedProperties?.takeRetainedValue() as? [String: Any]
-        else {
-            return snapshot
+        let needsBatteryData = includeStatic || includeMedium || includeSlow
+        let batteryData = needsBatteryData
+            ? serviceDictionaryProperty("BatteryData", service: service)
+            : nil
+
+        var packData: [String: Any]?
+        if let packMatching = IOServiceMatching("AppleSmartBatteryPack") {
+            let packService = IOServiceGetMatchingService(
+                kIOMainPortDefault,
+                packMatching
+            )
+            if packService != IO_OBJECT_NULL {
+                packData = serviceDictionaryProperty(
+                    "BatteryData",
+                    service: packService
+                )
+                IOObjectRelease(packService)
+            }
         }
 
-        snapshot.percentage = validated(
-            number("CurrentCapacity", in: properties),
-            range: 0...100
-        )
-        snapshot.temperature = normalizedCurrentBatteryTemperature(
-            number("Temperature", in: properties)
-        )
-        snapshot.voltage = validated(
-            number("Voltage", in: properties).map { $0 / 1000.0 },
-            range: 5...30
-        )
-        snapshot.amperage = validated(
-            signedNumber("InstantAmperage", in: properties).map {
+        if includeMedium {
+            if let percentage = validated(
+                serviceNumberProperty("CurrentCapacity", service: service)
+                    ?? batteryData.flatMap { number("CurrentCapacity", in: $0) }
+                    ?? packData.flatMap { number("StateOfCharge", in: $0) },
+                range: 0...100
+            ) {
+                snapshot.percentage = percentage
+            }
+        }
+        if let voltage = validated(
+            serviceNumberProperty("Voltage", service: service).map {
                 $0 / 1000.0
             },
+            range: 5...30
+        ) {
+            snapshot.voltage = voltage
+        }
+        if let amperage = validated(
+            serviceSignedNumberProperty("InstantAmperage", service: service)
+                .map { $0 / 1000.0 },
             range: -30...30
-        )
+        ) {
+            snapshot.amperage = amperage
+        }
         if includeSlow {
-            snapshot.cycleCount = integer("CycleCount", in: properties)
+            snapshot.cycleCount = serviceIntegerProperty(
+                "CycleCount",
+                service: service
+            ) ?? packData.flatMap { integer("CycleCount", in: $0) }
         }
         if includeStatic {
-            snapshot.designCapacity = batteryCapacity(
-                "DesignCapacity", in: properties
+            snapshot.designCapacity = batteryCapacityValue(
+                serviceNumberProperty("DesignCapacity", service: service)
+                    ?? batteryData.flatMap { number("DesignCapacity", in: $0) }
+                    ?? packData.flatMap { number("DesignCapacity", in: $0) }
             )
-            snapshot.maximumCapacity = batteryCapacity(
-                "NominalChargeCapacity", in: properties
-            )
-            snapshot.rawMaximumCapacity = batteryCapacity(
-                "AppleRawMaxCapacity", in: properties
-            )
-            if snapshot.maximumCapacity == nil {
-                snapshot.maximumCapacity = snapshot.rawMaximumCapacity
-            }
         }
-        snapshot.rawCurrentCapacity = batteryCapacity(
-            "AppleRawCurrentCapacity", in: properties
+        if includeStatic || includeSlow {
+            snapshot.healthPercentage = validated(
+                serviceNumberProperty("MaxCapacity", service: service)
+                    ?? batteryData.flatMap { number("MaxCapacity", in: $0) }
+                    ?? packData.flatMap { number("MaxCapacity", in: $0) },
+                range: 0...100
+            ) ?? snapshot.healthPercentage
+            snapshot.nominalCapacity = batteryCapacityValue(
+                serviceNumberProperty("NominalChargeCapacity", service: service)
+                    ?? batteryData.flatMap {
+                        number("NominalChargeCapacity", in: $0)
+                    }
+                    ?? packData.flatMap {
+                        number("NominalChargeCapacity", in: $0)
+                    }
+            )
+            snapshot.rawMaximumCapacity = batteryCapacityValue(
+                serviceNumberProperty("AppleRawMaxCapacity", service: service)
+                    ?? batteryData.flatMap {
+                        number("AppleRawMaxCapacity", in: $0)
+                            ?? number("FullChargeCapacity", in: $0)
+                    }
+                    ?? packData.flatMap {
+                        number("AppleRawMaxCapacity", in: $0)
+                            ?? number("FullChargeCapacity", in: $0)
+                    }
+            )
+            snapshot.maximumCapacity = snapshot.qmaxCapacity
+                ?? snapshot.rawMaximumCapacity
+                ?? snapshot.nominalCapacity
+        }
+        if includeMedium,
+           let rawCurrentCapacity = batteryCapacityValue(
+               serviceNumberProperty("AppleRawCurrentCapacity", service: service)
+                   ?? batteryData.flatMap {
+                       number("AppleRawCurrentCapacity", in: $0)
+                   }
+                   ?? packData.flatMap {
+                       number("AppleRawCurrentCapacity", in: $0)
+                   }
+           ) {
+            snapshot.rawCurrentCapacity = rawCurrentCapacity
+        }
+        if let packData {
+            applyPackBatteryData(
+                packData,
+                to: &snapshot,
+                includeStatic: includeStatic,
+                includeMedium: includeMedium,
+                includeSlow: includeSlow
+            )
+        }
+
+        if let charging = serviceBoolProperty("IsCharging", service: service) {
+            snapshot.charging = charging
+        }
+        let externalConnected = serviceBoolProperty(
+            "ExternalConnected",
+            service: service
         )
-        snapshot.charging = bool("IsCharging", in: properties)
-        snapshot.externalConnected = bool("ExternalConnected", in: properties)
+        let externalChargeCapable = serviceBoolProperty(
+            "ExternalChargeCapable",
+            service: service
+        )
+        if externalConnected != nil || externalChargeCapable != nil {
+            snapshot.externalConnected = (externalConnected ?? false)
+                || (externalChargeCapable ?? false)
+        }
 
-        if let batteryData = dictionary("BatteryData", in: properties) {
-            if includeStatic {
-                if snapshot.designCapacity == nil {
-                    snapshot.designCapacity = batteryCapacity(
-                        "DesignCapacity",
-                        in: batteryData
-                    )
-                }
-                if snapshot.maximumCapacity == nil {
-                    snapshot.maximumCapacity = batteryCapacity(
-                        "NominalChargeCapacity",
-                        in: batteryData
-                    )
-                }
-                if snapshot.rawMaximumCapacity == nil {
-                    snapshot.rawMaximumCapacity = batteryCapacity(
-                        "AppleRawMaxCapacity",
-                        in: batteryData
-                    )
+        if includeSlow {
+            let lifetime = packData.flatMap { dictionary("LifetimeData", in: $0) }
+                ?? batteryData.flatMap { dictionary("LifetimeData", in: $0) }
+            if let lifetime {
+                applyLifetimeData(lifetime, to: &snapshot)
+            }
+        }
+
+        let rawPackTemperature = packData.flatMap { number("Temperature", in: $0) }
+        let rawTopTemperature = serviceNumberProperty(
+            "Temperature",
+            service: service
+        ) ?? batteryData.flatMap { number("Temperature", in: $0) }
+        let rawTemperature = rawPackTemperature ?? rawTopTemperature
+        let averageTemperature = packData
+            .flatMap { dictionary("LifetimeData", in: $0) }
+            .flatMap { signedNumber("AverageTemperature", in: $0) }
+            .map { $0 / 10.0 }
+        if let temperature = normalizedCurrentBatteryTemperature(
+            rawTemperature,
+            preferCentiDegrees: rawPackTemperature != nil,
+            historicalMinimum: snapshot.historicalMinTemperature,
+            historicalMaximum: snapshot.historicalMaxTemperature,
+            averageTemperature: averageTemperature
+        ) {
+            snapshot.temperature = temperature
+        }
+
+        if includeStatic || includeMedium || includeSlow {
+            let banks = batteryBankRecords()
+            if let qmax = representativeQmax(banks) {
+                snapshot.qmaxCapacity = qmax
+                snapshot.maximumCapacity = qmax
+            }
+            let measurements = decodedCellMeasurements(
+                legacyBatteryData: batteryData,
+                bankRecords: banks
+            )
+            if includeMedium {
+                let voltages = measurements.voltages
+                if !voltages.isEmpty {
+                    snapshot.cellVoltages = voltages
                 }
             }
-            snapshot.cellVoltages = numberArray("CellVoltage", in: batteryData)
-                .map { $0 / 1000.0 }
-                .filter { (2...5.5).contains($0) }
             if includeSlow {
-                snapshot.cellResistance = numberArray(
-                    "WeightedRa",
-                    in: batteryData
-                ).filter { (0...100_000).contains($0) }
-
-                if let lifetime = dictionary("LifetimeData", in: batteryData) {
-                    let rawMinimumTemperature = signedNumber(
-                        "MinimumTemperature", in: lifetime
-                    )
-                    let rawMaximumTemperature = signedNumber(
-                        "MaximumTemperature", in: lifetime
-                    )
-                    (
-                        snapshot.historicalMinTemperature,
-                        snapshot.historicalMaxTemperature
-                    ) = normalizedHistoricalBatteryTemperatures(
-                        minimum: rawMinimumTemperature,
-                        maximum: rawMaximumTemperature
-                    )
-                    snapshot.historicalMaxChargeCurrent = validated(
-                        signedNumber(
-                            "MaximumChargeCurrent", in: lifetime
-                        ).map { abs($0) / 1000.0 },
-                        range: 0...50
-                    )
-                    snapshot.historicalMaxDischargeCurrent = validated(
-                        signedNumber(
-                            "MaximumDischargeCurrent", in: lifetime
-                        ).map { abs($0) / 1000.0 },
-                        range: 0...50
-                    )
+                let resistance = measurements.resistance
+                if !resistance.isEmpty {
+                    snapshot.cellResistance = resistance
                 }
             }
         }
 
-        snapshot.adapterName = nil
-        snapshot.adapterRatedWatts = nil
-        snapshot.negotiatedVoltage = nil
-        snapshot.negotiatedCurrent = nil
-        snapshot.pdProfiles = []
-        let adapter = dictionary("AdapterDetails", in: properties)
-            ?? dictionary("AppleRawAdapterDetails", in: properties)
-        if let adapter {
-            snapshot.adapterName = adapter["Name"] as? String
+        let shouldRefreshAdapterDetails = includeSlow
+            || (!previous.externalConnected && snapshot.externalConnected)
+            || previous.adapterName == nil
+            || previous.adapterName == "外接电源"
+        let adapter = shouldRefreshAdapterDetails
+            ? serviceFirstDictionaryProperty("AdapterDetails", service: service)
+                ?? serviceFirstDictionaryProperty(
+                    "AppleRawAdapterDetails",
+                    service: service
+                )
+            : nil
+        let hasAdapterDetails = adapter.map(adapterIsPresent) == true
+        if let adapter, snapshot.externalConnected || hasAdapterDetails {
+            snapshot.externalConnected = true
+            snapshot.adapterName = adapterDisplayName(adapter)
             snapshot.adapterRatedWatts = validated(
                 number("Watts", in: adapter),
                 range: 0...500
             )
             snapshot.negotiatedVoltage = validated(
-                number("AdapterVoltage", in: adapter).map {
-                    $0 / 1000.0
-                },
+                number("AdapterVoltage", in: adapter).map { $0 / 1000.0 },
                 range: 0...60
             )
             snapshot.negotiatedCurrent = validated(
                 number("Current", in: adapter).map { $0 / 1000.0 },
                 range: 0...15
             )
-            if let profiles = adapter["UsbHvcMenu"] as? [[String: Any]] {
+            snapshot.pdProfiles = []
+            if let profiles = dictionaryArray(adapter["UsbHvcMenu"]) {
                 snapshot.pdProfiles = profiles.compactMap { profile in
                     guard let voltage = validated(
                               number("MaxVoltage", in: profile),
@@ -223,31 +294,91 @@ enum SystemReader {
                     )
                 }
             }
+        } else if !snapshot.externalConnected {
+            snapshot.adapterName = nil
+            snapshot.adapterRatedWatts = nil
+            snapshot.negotiatedVoltage = nil
+            snapshot.negotiatedCurrent = nil
+            snapshot.pdProfiles = []
         }
 
-        snapshot.liveInputPower = nil
-        snapshot.liveInputVoltage = nil
-        snapshot.liveInputCurrent = nil
-        if let telemetry = dictionary("PowerTelemetryData", in: properties) {
-            snapshot.liveInputPower = validated(
+        if let telemetry = serviceDictionaryProperty(
+            "PowerTelemetryData",
+            service: service
+        ) {
+            if let inputPower = validated(
                 number("SystemPowerIn", in: telemetry).map {
                     $0 / 1000.0
                 },
                 range: 0...1_000
-            )
-            snapshot.liveInputVoltage = validated(
+            ) {
+                snapshot.liveInputPower = inputPower
+            }
+            if let inputVoltage = validated(
                 number("SystemVoltageIn", in: telemetry).map {
                     $0 / 1000.0
                 },
                 range: 0...60
-            )
-            snapshot.liveInputCurrent = validated(
+            ) {
+                snapshot.liveInputVoltage = inputVoltage
+            }
+            if let inputCurrent = validated(
                 signedNumber("SystemCurrentIn", in: telemetry).map {
                     abs($0) / 1000.0
                 },
                 range: 0...30
-            )
+            ) {
+                snapshot.liveInputCurrent = inputCurrent
+            }
         }
+        if let distribution = serviceDictionaryProperty(
+            "PowerDistribution",
+            service: service
+        ) {
+            if snapshot.liveInputPower == nil
+                || snapshot.liveInputPower == 0 {
+                snapshot.liveInputPower = validated(
+                    number("IPDInputPower", in: distribution).map {
+                        $0 / 1000.0
+                    },
+                    range: 0...1_000
+                )
+            }
+            if snapshot.liveInputVoltage == nil
+                || snapshot.liveInputVoltage == 0 {
+                snapshot.liveInputVoltage = validated(
+                    number("IPDInputVoltage", in: distribution).map {
+                        $0 / 1000.0
+                    },
+                    range: 0...60
+                )
+            }
+            if snapshot.liveInputCurrent == nil
+                || snapshot.liveInputCurrent == 0 {
+                snapshot.liveInputCurrent = validated(
+                    signedNumber("IPDInputCurrent", in: distribution).map {
+                        abs($0) / 1000.0
+                    },
+                    range: 0...30
+                )
+            }
+        }
+        // USB-C controllers may report a 5 V standby voltage while unplugged.
+        // Require actual transferred power/current before inferring a charger.
+        let hasLiveInput = snapshot.liveInputPower.map { $0 > 0.5 } == true
+            || snapshot.liveInputCurrent.map { $0 > 0.05 } == true
+        if snapshot.charging || hasLiveInput {
+            snapshot.externalConnected = true
+        }
+        if !snapshot.externalConnected {
+            snapshot.liveInputPower = nil
+            snapshot.liveInputVoltage = nil
+            snapshot.liveInputCurrent = nil
+        }
+        if snapshot.externalConnected, snapshot.adapterName == nil {
+            snapshot.adapterName = "外接电源"
+        }
+        applyLiveBatteryExtremes(to: &snapshot)
 
         return snapshot
     }
@@ -287,30 +418,264 @@ enum SystemReader {
         return "Mac"
     }
 
-    private static func normalizedCurrentBatteryTemperature(
-        _ rawValue: Double?
+    static func normalizedCurrentBatteryTemperature(
+        _ rawValue: Double?,
+        preferCentiDegrees: Bool = false,
+        historicalMinimum: Double? = nil,
+        historicalMaximum: Double? = nil,
+        averageTemperature: Double? = nil
     ) -> Double? {
         guard let rawValue, rawValue.isFinite else {
             return nil
         }
-        let candidate: Double
-        if (1_800...4_000).contains(rawValue) {
-            candidate = rawValue / 10.0 - 273.15
-        } else if (-40...100).contains(rawValue) {
-            candidate = rawValue
-        } else if (-400...1_000).contains(rawValue) {
-            candidate = rawValue / 10.0
-        } else {
-            return nil
+
+        var candidates: [(value: Double, score: Double)] = []
+        if (1_000...10_000).contains(rawValue) {
+            candidates.append((rawValue / 100.0, preferCentiDegrees ? 0 : 1))
         }
-        return (-30...100).contains(candidate) ? candidate : nil
+        if (1_800...4_000).contains(rawValue) {
+            candidates.append((rawValue / 10.0 - 273.15, preferCentiDegrees ? 2 : 0))
+        }
+        if (-400...1_000).contains(rawValue) {
+            candidates.append((rawValue / 10.0, 3))
+        }
+        if (-40...100).contains(rawValue) {
+            candidates.append((rawValue, 4))
+        }
+
+        let validCandidates = candidates.compactMap { candidate -> (Double, Double)? in
+            guard (-30...100).contains(candidate.value) else {
+                return nil
+            }
+            var score = candidate.score
+            if let minimum = historicalMinimum,
+               let maximum = historicalMaximum,
+               minimum <= maximum {
+                let permittedRange = (minimum - 5)...(maximum + 5)
+                if !permittedRange.contains(candidate.value) {
+                    score += 100 + min(
+                        abs(candidate.value - minimum),
+                        abs(candidate.value - maximum)
+                    )
+                }
+            }
+            if let averageTemperature,
+               (-30...100).contains(averageTemperature) {
+                score += abs(candidate.value - averageTemperature) * 0.05
+            }
+            return (candidate.value, score)
+        }
+        return validCandidates.min { $0.1 < $1.1 }?.0
     }
 
-    private static func batteryCapacity(
-        _ key: String,
-        in dictionary: [String: Any]
+    private static func batteryCapacityValue(_ value: Double?) -> Double? {
+        validated(value, range: 0...30_000)
+    }
+
+    static func applyPackBatteryData(
+        _ data: [String: Any],
+        to snapshot: inout BatterySnapshot,
+        includeStatic: Bool,
+        includeMedium: Bool,
+        includeSlow: Bool
+    ) {
+        if includeStatic,
+           let capacity = batteryCapacityValue(number("DesignCapacity", in: data)) {
+            snapshot.designCapacity = capacity
+        }
+        if includeStatic || includeSlow {
+            snapshot.healthPercentage = validated(
+                number("MaxCapacity", in: data),
+                range: 0...100
+            ) ?? snapshot.healthPercentage
+            snapshot.nominalCapacity = batteryCapacityValue(
+                number("NominalChargeCapacity", in: data)
+            )
+            snapshot.rawMaximumCapacity = batteryCapacityValue(
+                number("AppleRawMaxCapacity", in: data)
+                    ?? number("FullChargeCapacity", in: data)
+            )
+            // A missing bank read must not replace a learned Qmax with the
+            // different, load-dependent full-charge-capacity measurement.
+            snapshot.maximumCapacity = snapshot.qmaxCapacity
+                ?? snapshot.rawMaximumCapacity
+                ?? snapshot.nominalCapacity
+        }
+        if includeMedium,
+           let capacity = batteryCapacityValue(
+               number("AppleRawCurrentCapacity", in: data)
+           ) {
+            snapshot.rawCurrentCapacity = capacity
+        }
+        if includeSlow,
+           let lifetime = dictionary("LifetimeData", in: data) {
+            applyLifetimeData(lifetime, to: &snapshot)
+        }
+    }
+
+    static func applyLifetimeData(
+        _ lifetime: [String: Any],
+        to snapshot: inout BatterySnapshot
+    ) {
+        let temperatures = normalizedHistoricalBatteryTemperatures(
+            minimum: signedNumber("MinimumTemperature", in: lifetime),
+            maximum: signedNumber("MaximumTemperature", in: lifetime)
+        )
+        if let minimum = temperatures.0 {
+            snapshot.historicalMinTemperature = minimum
+        }
+        if let maximum = temperatures.1 {
+            snapshot.historicalMaxTemperature = maximum
+        }
+        if let current = validated(
+            signedNumber("MaximumChargeCurrent", in: lifetime)
+                .map { abs($0) / 1000.0 },
+            range: 0...50
+        ) {
+            snapshot.historicalMaxChargeCurrent = current
+        }
+        if let current = validated(
+            signedNumber("MaximumDischargeCurrent", in: lifetime)
+                .map { abs($0) / 1000.0 },
+            range: 0...50
+        ) {
+            snapshot.historicalMaxDischargeCurrent = current
+        }
+    }
+
+    static func decodedBankMeasurements(
+        _ records: [[String: Any]]
+    ) -> (voltages: [Double], resistance: [Double]) {
+        let ordered = records.sorted { lhs, rhs in
+            let leftPack = integer("PackID", in: lhs) ?? 0
+            let rightPack = integer("PackID", in: rhs) ?? 0
+            if leftPack != rightPack {
+                return leftPack < rightPack
+            }
+            return (integer("BankID", in: lhs) ?? 0)
+                < (integer("BankID", in: rhs) ?? 0)
+        }
+        var voltages: [Double] = []
+        var resistance: [Double] = []
+        for record in ordered {
+            guard let data = dictionary("BatteryData", in: record) else {
+                continue
+            }
+            if let voltage = number("CellVoltage", in: data).map({ $0 / 1000.0 }),
+               (2...5.5).contains(voltage) {
+                voltages.append(voltage)
+            }
+            if let value = number("WeightedRa", in: data),
+               (0...100_000).contains(value) {
+                resistance.append(value)
+            }
+        }
+        return (voltages, resistance)
+    }
+
+    static func representativeQmax(
+        _ records: [[String: Any]]
     ) -> Double? {
-        validated(number(key, in: dictionary), range: 0...30_000)
+        let values = records.compactMap { record -> Double? in
+            guard let data = dictionary("BatteryData", in: record),
+                  let qmax = number("Qmax", in: data),
+                  (100...30_000).contains(qmax) else {
+                return nil
+            }
+            return qmax
+        }
+        // Cells are connected in series, so the lowest learned cell capacity
+        // is the conservative limit for the whole battery pack.
+        return values.min()
+    }
+
+    static func decodedCellMeasurements(
+        legacyBatteryData: [String: Any]?,
+        bankRecords: [[String: Any]]
+    ) -> (voltages: [Double], resistance: [Double]) {
+        let legacyVoltages = legacyBatteryData
+            .map { numberArray("CellVoltage", in: $0) } ?? []
+        let legacyResistance = legacyBatteryData
+            .map { numberArray("WeightedRa", in: $0) } ?? []
+        let banks = decodedBankMeasurements(bankRecords)
+        let voltages = (legacyVoltages.isEmpty
+            ? banks.voltages
+            : legacyVoltages.map { $0 / 1000.0 })
+            .filter { (2...5.5).contains($0) }
+        let resistance = (legacyResistance.isEmpty
+            ? banks.resistance
+            : legacyResistance)
+            .filter { (0...100_000).contains($0) }
+        return (voltages, resistance)
+    }
+
+    private static func batteryBankRecords() -> [[String: Any]] {
+        guard let matching = IOServiceMatching("AppleSmartBatteryBank") else {
+            return []
+        }
+        var iterator = io_iterator_t()
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault,
+            matching,
+            &iterator
+        ) == KERN_SUCCESS else {
+            return []
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var records: [[String: Any]] = []
+        while true {
+            let bank = IOIteratorNext(iterator)
+            guard bank != IO_OBJECT_NULL else {
+                break
+            }
+            defer { IOObjectRelease(bank) }
+            guard let data = serviceDictionaryProperty(
+                "BatteryData",
+                service: bank
+            ) else {
+                continue
+            }
+            var record: [String: Any] = ["BatteryData": data]
+            if let packID = serviceIntegerProperty("PackID", service: bank) {
+                record["PackID"] = packID
+            }
+            if let bankID = serviceIntegerProperty("BankID", service: bank) {
+                record["BankID"] = bankID
+            }
+            records.append(record)
+        }
+        return records
+    }
+
+    private static func adapterDisplayName(
+        _ adapter: [String: Any]
+    ) -> String? {
+        if let name = adapter["Name"] as? String,
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name
+        }
+        let description = (adapter["Description"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if description?.localizedCaseInsensitiveContains("pd charger") == true
+            || number("FamilyCode", in: adapter).map({ $0 > 0 }) == true {
+            return "第三方充电器"
+        }
+        return nil
+    }
+
+    private static func adapterIsPresent(_ adapter: [String: Any]) -> Bool {
+        if let name = adapter["Name"] as? String,
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        if let description = adapter["Description"] as? String,
+           !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return number("Watts", in: adapter).map { $0 > 0 } == true
+            || number("AdapterVoltage", in: adapter).map { $0 > 0 } == true
+            || number("Current", in: adapter).map { $0 > 0 } == true
     }
 
     private static func validated(
@@ -323,7 +688,7 @@ enum SystemReader {
         return value
     }
 
-    private static func normalizedHistoricalBatteryTemperatures(
+    static func normalizedHistoricalBatteryTemperatures(
         minimum: Double?,
         maximum: Double?
     ) -> (Double?, Double?) {
@@ -343,36 +708,38 @@ enum SystemReader {
         return (nil, nil)
     }
 
-    private static func memoryUsed(total: Double) -> Double {
-        var statistics = vm_statistics64()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64_data_t>.size
-                / MemoryLayout<integer_t>.size
-        )
-        let result = withUnsafeMutablePointer(to: &statistics) { pointer in
-            pointer.withMemoryRebound(
-                to: integer_t.self,
-                capacity: Int(count)
-            ) {
-                host_statistics64(
-                    mach_host_self(),
-                    HOST_VM_INFO64,
-                    $0,
-                    &count
-                )
+    private static func applyLiveBatteryExtremes(
+        to snapshot: inout BatterySnapshot
+    ) {
+        if let temperature = snapshot.temperature {
+            if snapshot.historicalMinTemperature.map({
+                temperature < $0
+            }) != false {
+                snapshot.historicalMinTemperature = temperature
+            }
+            if snapshot.historicalMaxTemperature.map({
+                temperature > $0
+            }) != false {
+                snapshot.historicalMaxTemperature = temperature
             }
         }
-        guard result == KERN_SUCCESS else {
-            return 0
+
+        guard let amperage = snapshot.amperage else {
+            return
         }
-        let freePages = UInt64(statistics.free_count + statistics.speculative_count)
-        var pageSize: UInt64 = 0
-        var pageSizeLength = MemoryLayout<UInt64>.size
-        if sysctlbyname("hw.pagesize", &pageSize, &pageSizeLength, nil, 0) != 0 {
-            pageSize = 16_384
+        let absoluteAmperage = abs(amperage)
+        if snapshot.charging || amperage > 0 {
+            if snapshot.historicalMaxChargeCurrent.map({
+                absoluteAmperage > $0
+            }) != false {
+                snapshot.historicalMaxChargeCurrent = absoluteAmperage
+            }
+        } else if amperage < 0,
+                  snapshot.historicalMaxDischargeCurrent.map({
+                      absoluteAmperage > $0
+                  }) != false {
+            snapshot.historicalMaxDischargeCurrent = absoluteAmperage
         }
-        let freeBytes = Double(freePages) * Double(pageSize)
-        return max(0, total - freeBytes)
     }
 
     private static func dictionary(
@@ -430,5 +797,90 @@ enum SystemReader {
             return values.compactMap { ($0 as? NSNumber)?.doubleValue }
         }
         return []
+    }
+
+    private static func dictionaryArray(_ value: Any?) -> [[String: Any]]? {
+        if let dictionaries = value as? [[String: Any]] {
+            return dictionaries
+        }
+        if let array = value as? NSArray {
+            return array.compactMap { element in
+                if let dictionary = element as? [String: Any] {
+                    return dictionary
+                }
+                return (element as? NSDictionary) as? [String: Any]
+            }
+        }
+        return nil
+    }
+
+    private static func serviceProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> Any? {
+        guard let value = IORegistryEntryCreateCFProperty(
+            service,
+            key as CFString,
+            kCFAllocatorDefault,
+            0
+        ) else {
+            return nil
+        }
+        return value.takeRetainedValue()
+    }
+
+    private static func serviceDictionaryProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> [String: Any]? {
+        let value = serviceProperty(key, service: service)
+        if let dictionary = value as? [String: Any] {
+            return dictionary
+        }
+        return (value as? NSDictionary) as? [String: Any]
+    }
+
+    private static func serviceFirstDictionaryProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> [String: Any]? {
+        guard let value = serviceProperty(key, service: service) else {
+            return nil
+        }
+        if let dictionary = value as? [String: Any] {
+            return dictionary
+        }
+        return dictionaryArray(value)?.first
+    }
+
+    private static func serviceNumberProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> Double? {
+        (serviceProperty(key, service: service) as? NSNumber)?.doubleValue
+    }
+
+    private static func serviceSignedNumberProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> Double? {
+        guard let value = serviceProperty(key, service: service) as? NSNumber else {
+            return nil
+        }
+        return Double(value.int64Value)
+    }
+
+    private static func serviceIntegerProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> Int? {
+        (serviceProperty(key, service: service) as? NSNumber)?.intValue
+    }
+
+    private static func serviceBoolProperty(
+        _ key: String,
+        service: io_registry_entry_t
+    ) -> Bool? {
+        (serviceProperty(key, service: service) as? NSNumber)?.boolValue
     }
 }

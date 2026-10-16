@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var store: SensorStore
     @EnvironmentObject private var languageSettings: LanguageSettings
+    @AppStorage("detailStyle") private var detailStyleRaw = DetailStyle.accent.rawValue
+
+    private var detailStyle: DetailStyle {
+        DetailStyle(rawValue: detailStyleRaw) ?? .accent
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -14,64 +17,15 @@ struct ContentView: View {
                     .padding(.top, 14)
                     .padding(.bottom, 8)
 
-                List(DashboardSection.allCases) { section in
-                    Button {
-                        store.selectedSection = section
-                    } label: {
-                        Label {
-                            Text(section.title)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.primary)
-                        } icon: {
-                            Image(systemName: section.symbol)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(
-                                    store.selectedSection == section
-                                        ? Color.white
-                                        : Color.secondary
-                                )
-                                .frame(width: 24, height: 24)
-                                .background(
-                                    store.selectedSection == section
-                                        ? AnyShapeStyle(
-                                            LinearGradient(
-                                                colors: [
-                                                    AppPalette.brandTeal,
-                                                    AppPalette.brandLavender,
-                                                ],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
-                                        : AnyShapeStyle(Color.clear),
-                                    in: RoundedRectangle(
-                                        cornerRadius: 7,
-                                        style: .continuous
-                                    )
-                                )
+                List {
+                    ForEach(DashboardGroup.all) { group in
+                        Section(tr(group.title)) {
+                            ForEach(group.sections) { section in
+                                navigationRow(section)
+                            }
                         }
-                        .frame(
-                            maxWidth: .infinity,
-                            minHeight: 34,
-                            alignment: .leading
-                        )
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .listRowInsets(
-                        EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
-                    )
-                    .listRowBackground(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(
-                                store.selectedSection == section
-                                    ? AppPalette.brandTeal.opacity(0.13)
-                                    : Color.clear
-                            )
-                            .padding(.horizontal, 2)
-                    )
+                    navigationRow(.about)
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
@@ -101,6 +55,10 @@ struct ContentView: View {
             Group {
                 switch store.selectedSection ?? .overview {
                 case .overview: OverviewView()
+                case .performance: PerformanceView()
+                case .processes: ProcessesView()
+                case .systemInfo: SystemInformationView()
+                case .ports: PortsView()
                 case .motion: MotionView()
                 case .environment: EnvironmentView()
                 case .trackpad: TrackpadView()
@@ -112,8 +70,29 @@ struct ContentView: View {
                 case .about: AboutView()
                 }
             }
+            .environment(\.detailStyle, detailStyle)
         }
+        .toolbar(removing: store.isMagicAnglePresented ? .sidebarToggle : nil)
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    ForEach(DetailStyle.allCases) { style in
+                        Button {
+                            detailStyleRaw = style.rawValue
+                        } label: {
+                            Label(
+                                style.title,
+                                systemImage: detailStyle == style
+                                    ? "checkmark.circle.fill"
+                                    : "circle"
+                            )
+                        }
+                    }
+                } label: {
+                    Image(systemName: "paintpalette")
+                }
+                .help(tr("切换右侧区域设计"))
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     languageSettings.toggle()
@@ -153,6 +132,57 @@ struct ContentView: View {
             value: store.isMagicAnglePresented
         )
     }
+    private func navigationRow(_ section: DashboardSection) -> some View {
+        Button {
+            store.selectedSection = section
+        } label: {
+            Label {
+                Text(section.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+            } icon: {
+                Image(systemName: section.symbol)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(
+                        store.selectedSection == section
+                            ? AppPalette.brandTeal
+                            : Color.secondary
+                    )
+                    .frame(width: 26, height: 24)
+            }
+            .frame(
+                maxWidth: .infinity,
+                minHeight: 34,
+                alignment: .leading
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .listRowInsets(
+            EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
+        )
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(
+                    store.selectedSection == section
+                        ? AppPalette.brandTeal.opacity(0.10)
+                        : Color.clear
+                )
+                .padding(.horizontal, 2)
+                .overlay(alignment: .leading) {
+                    if store.selectedSection == section {
+                        Capsule()
+                            .fill(AppPalette.brandTeal.opacity(0.82))
+                            .frame(width: 3, height: 18)
+                            .padding(.leading, 5)
+                    }
+                }
+        )
+    }
+
 }
 
 private struct MagicAngleOverlay: View {

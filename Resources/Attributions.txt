@@ -1,6 +1,17 @@
 Mac Unseen third-party notices
 ==============================
 
+MAcordion
+---------
+The optional accordion easter egg adapts MAcordion's two-detuned-reed
+synthesis approach and musical keyboard mapping. The audio callback and
+lid-motion integration have been rewritten for Mac Unseen.
+Creator: bruiselea
+Source: https://github.com/bruiselea/MAcordion
+Revision: f572aa26161de29d4b6dfc02071d9e4408725918
+License: MAcordion Custom License (credit required)
+Full license: Licenses/MAcordion.txt
+
 Apple SPU sensor research
 -------------------------
 The SPU sensor helper contains adapted IOKit access patterns and sensor
@@ -34,7 +45,7 @@ Revision: 9b21ebd2d2a5e8e396e64e7142570c955638a600
 
 The iSMC v0.16.5 project source is included under Resources/Source.
 See OPEN_SOURCE_COMPLIANCE.md for the additional corresponding-source
-condition that applies before commercial redistribution.
+condition that applies before binary redistribution.
 Mac Unseen also builds a small read-only fan-speed probe from iSMC's GPL
 AppleSMC transport. Its source, transport source, license, and standalone
 build instructions are included under Resources/Source/FanSpeedProbe.

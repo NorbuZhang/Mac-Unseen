@@ -1,6 +1,29 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
+
+enum DetailStyle: String, CaseIterable, Identifiable {
+    case accent
+    case standard
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .accent: tr("强调色设计")
+        case .standard: tr("标准设计")
+        }
+    }
+}
+
+private struct DetailStyleKey: EnvironmentKey {
+    static let defaultValue = DetailStyle.accent
+}
+
+extension EnvironmentValues {
+    var detailStyle: DetailStyle {
+        get { self[DetailStyleKey.self] }
+        set { self[DetailStyleKey.self] = newValue }
+    }
+}
 
 enum AppPalette {
     static let accent = Color(

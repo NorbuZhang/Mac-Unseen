@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 /*
  * Portions adapted from Kyome22/OpenMultitouchSupport,
  * Copyright (c) 2019 Takuto Nakamura, MIT License.

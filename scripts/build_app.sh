@@ -1,5 +1,4 @@
 #!/bin/zsh
-# SPDX-License-Identifier: MPL-2.0
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,21 +14,27 @@ RESOURCES="$CONTENTS/Resources"
 ICONSET="$PACKAGE_DIR/AppIcon.iconset"
 ICON_PNG="$PACKAGE_DIR/AppIcon-1024.png"
 FAN_PROBE="$PACKAGE_DIR/FanSpeedProbe"
+LIVE_POWER_PROBE="$PACKAGE_DIR/LivePowerProbe"
 SOURCE_STAGE="$PACKAGE_DIR/source-stage"
 
 mkdir -p "$ROOT/outputs" "$ROOT/work/cache/clang" "$PACKAGE_DIR"
 rm -rf \
     "$STAGE_APP" "$OUTPUT_APP" "$OUTPUT_ZIP" "$ICONSET" "$ICON_PNG" \
-    "$FAN_PROBE" "$SOURCE_STAGE"
+    "$FAN_PROBE" "$LIVE_POWER_PROBE" "$SOURCE_STAGE"
 
 export CLANG_MODULE_CACHE_PATH="$ROOT/work/cache/clang"
-swift build -c release --scratch-path "$BUILD_DIR"
-BIN_DIR="$(swift build -c release --scratch-path "$BUILD_DIR" --show-bin-path)"
+SWIFT_BUILD_ARGS=(-c release --scratch-path "$BUILD_DIR")
+if [[ "${MAC_UNSEEN_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
+    SWIFT_BUILD_ARGS+=(--disable-sandbox)
+fi
+swift build "${SWIFT_BUILD_ARGS[@]}"
+BIN_DIR="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)"
 
 mkdir -p \
     "$CONTENTS/MacOS" \
     "$RESOURCES/Licenses/iSMC-Dependencies" \
-    "$RESOURCES/Source/FanSpeedProbe"
+    "$RESOURCES/Source/FanSpeedProbe" \
+    "$RESOURCES/Source/LivePowerProbe"
 install -m 755 "$BIN_DIR/$EXECUTABLE_NAME" "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 install -m 755 "$ROOT/Resources/advanced_sensor_helper.py" \
     "$RESOURCES/advanced_sensor_helper.py"
@@ -46,13 +51,34 @@ xcrun clang -Os \
     -framework CoreFoundation \
     -o "$FAN_PROBE"
 install -m 755 "$FAN_PROBE" "$RESOURCES/FanSpeedProbe"
+xcrun clang -Os \
+    -I "$ROOT/work/vendor/iSMC/gosmc" \
+    "$ROOT/Tools/live_power_probe.c" \
+    "$ROOT/work/vendor/iSMC/gosmc/smc.c" \
+    -framework IOKit \
+    -framework CoreFoundation \
+    -o "$LIVE_POWER_PROBE"
+install -m 755 "$LIVE_POWER_PROBE" "$RESOURCES/LivePowerProbe"
 strip -x \
     "$CONTENTS/MacOS/$EXECUTABLE_NAME" \
     "$RESOURCES/iSMC" \
     "$RESOURCES/smartctl" \
-    "$RESOURCES/FanSpeedProbe"
+    "$RESOURCES/FanSpeedProbe" \
+    "$RESOURCES/LivePowerProbe"
 install -m 644 "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
+# SwiftPM with the current Xcode records the deployment target (15.0) as the
+# executable's SDK version. macOS uses that marker when styling native toolbar
+# controls. Match the 26.5 marker of the previous release to keep its title bar.
+COMPAT_EXECUTABLE="$PACKAGE_DIR/MacUnseen-toolbar-compatible"
+MINIMUM_MACOS_VERSION="$(/usr/libexec/PlistBuddy -c \
+    'Print :LSMinimumSystemVersion' "$CONTENTS/Info.plist")"
+xcrun vtool -set-build-version macos "$MINIMUM_MACOS_VERSION" 26.5 \
+    -replace -output "$COMPAT_EXECUTABLE" \
+    "$CONTENTS/MacOS/$EXECUTABLE_NAME"
+install -m 755 "$COMPAT_EXECUTABLE" "$CONTENTS/MacOS/$EXECUTABLE_NAME"
+rm -f "$COMPAT_EXECUTABLE"
 install -m 644 "$ROOT/Resources/Attributions.txt" "$RESOURCES/Attributions.txt"
+install -m 644 "$ROOT/Resources/Licenses/MAcordion.txt" "$RESOURCES/Licenses/MAcordion.txt"
 install -m 644 "$ROOT/OPEN_SOURCE_COMPLIANCE.md" \
     "$RESOURCES/OPEN_SOURCE_COMPLIANCE.md"
 install -m 644 "$ROOT/work/vendor/apple-silicon-accelerometer/LICENSE" \
@@ -90,34 +116,51 @@ install -m 644 "$ROOT/work/vendor/iSMC/gosmc/LICENSE" \
     "$RESOURCES/Source/FanSpeedProbe/LICENSE"
 install -m 644 "$ROOT/Resources/FanSpeedProbe-BUILDING.txt" \
     "$RESOURCES/Source/FanSpeedProbe/BUILDING.txt"
+install -m 644 "$ROOT/Tools/live_power_probe.c" \
+    "$RESOURCES/Source/LivePowerProbe/live_power_probe.c"
+install -m 644 "$ROOT/Resources/LivePowerProbe-BUILDING.txt" \
+    "$RESOURCES/Source/LivePowerProbe/BUILDING.txt"
 
-mkdir -p "$ICONSET" "$ROOT/work/cache/icon"
-xcrun swift -module-cache-path "$ROOT/work/cache/icon" \
-    "$ROOT/scripts/make_icon.swift" \
-    "$ROOT/Resources/AppIcon-1024.png" \
-    "$ICON_PNG"
+if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
+    install -m 644 "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
+else
+    mkdir -p "$ICONSET" "$ROOT/work/cache/icon"
+    xcrun swift -module-cache-path "$ROOT/work/cache/icon" \
+        "$ROOT/scripts/make_icon.swift" \
+        "$ROOT/Resources/AppIcon-1024.png" \
+        "$ICON_PNG"
 
-for item in \
-    "16 icon_16x16.png" \
-    "32 icon_16x16@2x.png" \
-    "32 icon_32x32.png" \
-    "64 icon_32x32@2x.png" \
-    "128 icon_128x128.png" \
-    "256 icon_128x128@2x.png" \
-    "256 icon_256x256.png" \
-    "512 icon_256x256@2x.png" \
-    "512 icon_512x512.png" \
-    "1024 icon_512x512@2x.png"
-do
-    size="${item%% *}"
-    name="${item#* }"
-    sips -z "$size" "$size" "$ICON_PNG" --out "$ICONSET/$name" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$RESOURCES/AppIcon.icns"
+    for item in \
+        "16 icon_16x16.png" \
+        "32 icon_16x16@2x.png" \
+        "32 icon_32x32.png" \
+        "64 icon_32x32@2x.png" \
+        "128 icon_128x128.png" \
+        "256 icon_128x128@2x.png" \
+        "256 icon_256x256.png" \
+        "512 icon_256x256@2x.png" \
+        "512 icon_512x512.png" \
+        "1024 icon_512x512@2x.png"
+    do
+        size="${item%% *}"
+        name="${item#* }"
+        sips -z "$size" "$size" "$ICON_PNG" --out "$ICONSET/$name" >/dev/null
+    done
+    iconutil -c icns "$ICONSET" -o "$RESOURCES/AppIcon.icns"
+fi
 
-/usr/libexec/PlistBuddy -c \
-    "Add :BuildMachineModel string $(sysctl -n hw.model)" \
-    "$CONTENTS/Info.plist"
+BUILD_MACHINE_MODEL="$(sysctl -n hw.model 2>/dev/null || true)"
+if [[ -z "$BUILD_MACHINE_MODEL" ]]; then
+    BUILD_MACHINE_MODEL="$(
+        /usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice \
+            | /usr/bin/awk -F\" '/\"model\"/ { print $4; exit }'
+    )"
+fi
+if [[ -n "$BUILD_MACHINE_MODEL" ]]; then
+    /usr/libexec/PlistBuddy -c \
+        "Add :BuildMachineModel string $BUILD_MACHINE_MODEL" \
+        "$CONTENTS/Info.plist"
+fi
 
 PYTHONPYCACHEPREFIX="$ROOT/work/pycache" \
     /usr/bin/python3 -m py_compile "$RESOURCES/advanced_sensor_helper.py"

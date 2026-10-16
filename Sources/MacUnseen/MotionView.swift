@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct MotionView: View {

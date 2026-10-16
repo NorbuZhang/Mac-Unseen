@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct OverviewView: View {
@@ -34,43 +32,12 @@ struct OverviewView: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 SoftDivider()
-                MetricGrid(
-                    metrics: [
-                        Metric(
-                            name: "内存",
-                            value: formatBytes(store.system.memoryUsed),
-                            detail: AppLocalization.language == .english
-                                ? "\(formatBytes(store.system.memoryTotal)) total"
-                                : "共 \(formatBytes(store.system.memoryTotal))"
-                        ),
-                        Metric(
-                            name: "磁盘",
-                            value: formatBytes(store.system.diskUsed),
-                            detail: AppLocalization.language == .english
-                                ? "\(formatBytes(store.system.diskTotal)) total"
-                                : "共 \(formatBytes(store.system.diskTotal))"
-                        ),
-                        Metric(
-                            name: "系统负载",
-                            value: String(format: "%.2f", store.system.loadAverages.first ?? 0),
-                            detail: "1 / 5 / 15 分钟"
-                        ),
-                        Metric(
-                            name: "处理器核心",
-                            value: "\(store.system.processorCount)"
-                        ),
-                        Metric(
-                            name: "热状态",
-                            value: store.system.thermalState
-                        ),
-                        Metric(
-                            name: "运行时间",
-                            value: formatDuration(store.system.uptime)
-                        ),
-                    ],
-                    tint: .blue,
-                    minimumWidth: 120
-                )
+                PerformanceSummary()
+                HStack(spacing: 18) {
+                    Button(tr("查看实时性能")) { store.selectedSection = .performance }
+                    Button(tr("查看进程")) { store.selectedSection = .processes }
+                    Button(tr("查看系统信息")) { store.selectedSection = .systemInfo }
+                }.buttonStyle(.link).font(.callout)
             }
 
             if store.advancedSensorsActive {

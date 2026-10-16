@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct Page<Content: View>: View {
@@ -88,77 +86,105 @@ struct CardSurface: View {
     let tint: Color
     let cornerRadius: CGFloat
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.detailStyle) private var detailStyle
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(
-                colorScheme == .light
-                    ? Color.white.opacity(0.72)
-                    : Color.white.opacity(0.055)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                tint.opacity(0.105),
-                                tint.opacity(0.035),
-                                colorScheme == .light
-                                    ? Color.white.opacity(0.10)
-                                    : AppPalette.blue.opacity(0.025),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+        if detailStyle == .accent {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    colorScheme == .light
+                        ? Color.white.opacity(0.72)
+                        : Color.white.opacity(0.055)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    tint.opacity(0.105),
+                                    tint.opacity(0.035),
+                                    colorScheme == .light
+                                        ? Color.white.opacity(0.10)
+                                        : AppPalette.blue.opacity(0.025),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                tint.opacity(0.18),
-                                AppPalette.cardBorder,
-                                Color.primary.opacity(0.045),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            }
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    tint.opacity(0.18),
+                                    AppPalette.cardBorder,
+                                    Color.primary.opacity(0.045),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                }
+        } else {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(
+                            colorScheme == .light
+                                ? Color.white.opacity(0.28)
+                                : Color.black.opacity(0.055)
+                        )
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(Color.primary.opacity(0.085), lineWidth: 1)
+                }
+        }
     }
 }
 
 struct TileSurface: View {
     let tint: Color
+    @Environment(\.detailStyle) private var detailStyle
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 13, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        tint.opacity(0.105),
-                        AppPalette.tileFill,
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                tint.opacity(0.16),
-                                AppPalette.tileBorder,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
+        if detailStyle == .accent {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            tint.opacity(0.105),
+                            AppPalette.tileFill,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-            }
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    tint.opacity(0.16),
+                                    AppPalette.tileBorder,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                }
+        } else {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(Color.primary.opacity(0.038))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(Color.primary.opacity(0.065), lineWidth: 1)
+                }
+        }
     }
 }
 
@@ -204,34 +230,61 @@ struct Card<Content: View>: View {
     let symbol: String
     var tint: Color = .accentColor
     var info: String?
+    var infoActionTitle: String? = nil
+    var infoAction: (() -> Void)? = nil
     @ViewBuilder let content: Content
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.detailStyle) private var detailStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 9) {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(detailStyle == .accent ? Color.white : tint)
                     .frame(width: 30, height: 30)
                     .background(
-                        LinearGradient(
-                            colors: [tint.opacity(0.95), tint.opacity(0.68)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
+                        detailStyle == .accent
+                            ? AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [
+                                        tint.opacity(0.95),
+                                        tint.opacity(0.68),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            : AnyShapeStyle(
+                                tint.opacity(colorScheme == .dark ? 0.20 : 0.12)
+                            ),
                         in: RoundedRectangle(cornerRadius: 9)
                     )
-                    .shadow(color: tint.opacity(0.18), radius: 5, y: 2)
+                    .overlay {
+                        if detailStyle == .standard {
+                            RoundedRectangle(cornerRadius: 9)
+                                .stroke(tint.opacity(0.14), lineWidth: 1)
+                        }
+                    }
+                    .shadow(
+                        color: detailStyle == .accent
+                            ? tint.opacity(0.18)
+                            : .clear,
+                        radius: 5,
+                        y: 2
+                    )
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         Text(tr(title))
                             .font(.headline)
                             .foregroundStyle(.primary)
                         if let info {
-                            InfoButton(text: info)
+                            InfoButton(text: info, actionTitle: infoActionTitle, action: infoAction)
                         }
                     }
-                    HeaderAccent(tint: tint)
+                    if detailStyle == .accent {
+                        HeaderAccent(tint: tint)
+                    }
                 }
             }
             content
@@ -244,6 +297,8 @@ struct Card<Content: View>: View {
 
 struct InfoButton: View {
     let text: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
     @State private var isPresented = false
 
     var body: some View {
@@ -263,13 +318,25 @@ struct InfoButton: View {
         .buttonStyle(.plain)
         .help(tr(text))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            Text(tr(text))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: 330, alignment: .leading)
-                .padding(18)
-                .background(.regularMaterial)
+            VStack(alignment: .leading, spacing: 14) {
+                Text(tr(text))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let actionTitle, let action {
+                    Button {
+                        isPresented = false
+                        action()
+                    } label: {
+                        Label(tr(actionTitle), systemImage: "music.note")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.callout)
+                }
+            }
+            .frame(width: 330, alignment: .leading)
+            .padding(18)
+            .background(.regularMaterial)
         }
     }
 }
@@ -282,6 +349,8 @@ struct MetricTile: View {
     var info: String?
     var tint: Color = .accentColor
     var expanded = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.detailStyle) private var detailStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: expanded ? 5 : 3) {
@@ -333,11 +402,20 @@ struct MetricTile: View {
         .overlay(alignment: .leading) {
             Capsule()
                 .fill(
-                    LinearGradient(
-                        colors: [tint.opacity(0.95), tint.opacity(0.3)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                    detailStyle == .accent
+                        ? AnyShapeStyle(
+                            LinearGradient(
+                                colors: [
+                                    tint.opacity(0.95),
+                                    tint.opacity(0.3),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        : AnyShapeStyle(
+                            tint.opacity(colorScheme == .dark ? 0.58 : 0.68)
+                        )
                 )
                 .frame(width: 3, height: 31)
                 .padding(.leading, 1.5)

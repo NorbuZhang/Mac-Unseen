@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import AppKit
 @preconcurrency import CoreLocation
 import Foundation
@@ -13,12 +11,17 @@ final class SensorStore:
 {
     @Published var selectedSection: DashboardSection? = .overview {
         didSet {
+            // A disappearing ScrollView may never deliver its final idle phase.
+            // Do not let that stale state suspend refreshes on the next page.
+            pageIsScrolling = false
+            if selectedSection == .ports { forceNetworkPortRefresh = true }
             if selectedSection == .network {
                 if oldValue != .network {
                     forceNetworkPortRefresh = true
                 }
                 requestNetworkLocationAccessIfNeeded()
             }
+            restartMonitoring()
             configureTrackpadForSelectedSection()
             if selectedSection == .temperature {
                 temperatureDiscoveryStartedAt = Date()
@@ -32,6 +35,12 @@ final class SensorStore:
             }
         }
     }
+    @Published var performance = PerformanceReading()
+    @Published var processSnapshot = ProcessSnapshot()
+    @Published var cpuHistory: [Double] = []
+    @Published var systemIdentity = SystemIdentity()
+    @Published private(set) var monitoringActive = false
+    private var monitoringTask: Task<Void, Never>?
     @Published var system = SystemSnapshot()
     @Published var battery = BatterySnapshot()
     @Published var storage = StorageSnapshot()
@@ -96,11 +105,15 @@ final class SensorStore:
     private var lastSystemRefresh = Date.distantPast
     private var lastDiskUsageRefresh = Date.distantPast
     private var lastBatteryRefresh = Date.distantPast
+    private var lastBatteryMediumRefresh = Date.distantPast
     private var lastBatterySlowRefresh = Date.distantPast
     private var lastAdvancedStatusRefresh = Date.distantPast
     private var storageMetadataLoaded = false
     private var lastNetworkPortRefresh = Date.distantPast
     private var forceNetworkPortRefresh = false
+    private let batteryLiveRefreshInterval: TimeInterval = 0.5
+    private let batteryMediumRefreshInterval: TimeInterval = 2
+    private let batterySlowRefreshInterval: TimeInterval = 300
     private let advancedDirectory: URL
     private let advancedOutputURL: URL
     private let advancedStopURL: URL
@@ -125,13 +138,16 @@ final class SensorStore:
             withIntermediateDirectories: true
         )
         writeAdvancedConfiguration()
+        systemIdentity = SystemIdentityReader.read()
         system = SystemReader.readSystem()
         lastSystemRefresh = Date()
         lastDiskUsageRefresh = Date()
         battery = SystemReader.readBattery()
+        lastBatteryMediumRefresh = Date()
         lastBatterySlowRefresh = Date()
         readAdvancedSnapshot(publishData: true)
         startRefreshing()
+        restartMonitoring()
     }
 
     func startAdvancedSensors() {
@@ -145,6 +161,10 @@ final class SensorStore:
         let ismc = Bundle.main.url(forResource: "iSMC", withExtension: nil),
         let fanProbe = Bundle.main.url(
             forResource: "FanSpeedProbe",
+            withExtension: nil
+        ),
+        let powerProbe = Bundle.main.url(
+            forResource: "LivePowerProbe",
             withExtension: nil
         ),
         let smartctl = Bundle.main.url(forResource: "smartctl", withExtension: nil)
@@ -172,14 +192,22 @@ final class SensorStore:
         let helperPath = helper.path
         let ismcPath = ismc.path
         let fanProbePath = fanProbe.path
+        let powerProbePath = powerProbe.path
         let smartctlPath = smartctl.path
+        guard let pythonPath = Self.resolvePythonInterpreter() else {
+            isAuthorizing = false
+            authorizationMessage = "未找到可运行的 Python 3。请安装 python.org 或 Homebrew Python；系统 /usr/bin/python3 在未安装开发工具时不能运行高级传感器。"
+            return
+        }
 
         Task {
             let launchResult = await Task.detached(priority: .userInitiated) {
                 Self.launchPrivilegedHelper(
+                    pythonPath: pythonPath,
                     helperPath: helperPath,
                     ismcPath: ismcPath,
                     fanProbePath: fanProbePath,
+                    powerProbePath: powerProbePath,
                     smartctlPath: smartctlPath,
                     outputPath: outputPath,
                     stopPath: stopPath,
@@ -223,6 +251,7 @@ final class SensorStore:
             return
         }
         appIsActive = active
+        restartMonitoring()
         advancedSnapshotStaleSince = nil
         writeAdvancedConfiguration()
         if active {
@@ -242,7 +271,6 @@ final class SensorStore:
         } else {
             expandedTemperatureGroups.remove(id)
         }
-        writeAdvancedConfiguration()
     }
 
     func isTemperatureGroupExpanded(_ id: String) -> Bool {
@@ -282,6 +310,8 @@ final class SensorStore:
     }
 
     func stop() {
+        monitoringTask?.cancel()
+        monitoringTask = nil
         refreshTask?.cancel()
         refreshTask = nil
         hardwareStatusTask?.cancel()
@@ -315,6 +345,47 @@ final class SensorStore:
         trackpadDetails.running = false
     }
 
+    func refreshSystemInformation() {
+        systemIdentity = SystemIdentityReader.read()
+        system = SystemReader.readSystem()
+        lastSystemRefresh = Date()
+        lastDiskUsageRefresh = Date()
+    }
+
+    private func restartMonitoring() {
+        monitoringTask?.cancel()
+        monitoringTask = nil
+        monitoringActive = false
+        let section = selectedSection ?? .overview
+        guard let interval = MonitoringRefreshPolicy.interval(for: section, active: appIsActive) else { return }
+        monitoringActive = true
+        cpuHistory = []
+        if section == .processes { processSnapshot = ProcessSnapshot() }
+        else { performance = PerformanceReading() }
+        // New instance intentionally discards every cumulative-counter baseline.
+        let reader = PerformanceReader()
+        monitoringTask = Task { [weak self] in
+            while !Task.isCancelled {
+                if section == .processes {
+                    let value = await reader.sampleProcesses()
+                    guard let self, !Task.isCancelled, self.appIsActive,
+                          self.selectedSection == section else { return }
+                    self.processSnapshot = value
+                } else {
+                    let value = await reader.sample()
+                    guard let self, !Task.isCancelled, self.appIsActive,
+                          self.selectedSection == section else { return }
+                    self.performance = value
+                    if let cpu = value.cpu {
+                        self.cpuHistory.append(cpu)
+                        if self.cpuHistory.count > 60 { self.cpuHistory.removeFirst(self.cpuHistory.count - 60) }
+                    }
+                }
+                try? await Task.sleep(for: .seconds(interval))
+            }
+        }
+    }
+
     private func startRefreshing() {
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -337,7 +408,7 @@ final class SensorStore:
         hardwareStatusTask?.cancel()
         hardwareStatusTask = nil
         guard appIsActive,
-              selectedSection == .storage || selectedSection == .network else {
+              selectedSection == .storage || selectedSection == .network || selectedSection == .ports else {
             return
         }
         let section = selectedSection
@@ -366,8 +437,8 @@ final class SensorStore:
                     guard let self else {
                         return
                     }
-                    let includePorts = forceNetworkPortRefresh
-                        || Date().timeIntervalSince(lastNetworkPortRefresh) >= 30
+                    let includePorts = section == .ports && (forceNetworkPortRefresh
+                        || Date().timeIntervalSince(lastNetworkPortRefresh) >= 30)
                     let previous = network
                     let value = await Task.detached(priority: .utility) {
                         HardwareStatusReader.readNetwork(
@@ -376,7 +447,7 @@ final class SensorStore:
                         )
                     }.value
                     guard !Task.isCancelled,
-                          selectedSection == .network else {
+                          selectedSection == section else {
                         return
                     }
                     network = value
@@ -389,7 +460,7 @@ final class SensorStore:
                     return
                 }
                 try? await Task.sleep(
-                    for: .seconds(section == .network ? 5 : 60)
+                    for: .seconds(section == .network ? 5 : section == .ports ? 30 : 60)
                 )
             }
         }
@@ -404,6 +475,8 @@ final class SensorStore:
             return .milliseconds(100)
         case .temperature, .fans:
             return .seconds(1)
+        case .battery:
+            return .milliseconds(500)
         case .storage:
             return .seconds(2)
         default:
@@ -414,7 +487,7 @@ final class SensorStore:
     private func refreshSelectedSection(force: Bool = false) {
         let section = selectedSection ?? .overview
         let now = Date()
-        if pageIsScrolling {
+        if pageIsScrolling, section != .battery {
             if now.timeIntervalSince(lastAdvancedStatusRefresh) >= 2 {
                 readAdvancedSnapshot(publishData: false)
             }
@@ -422,11 +495,11 @@ final class SensorStore:
         }
         var readAdvanced = false
         switch section {
-        case .overview:
-            if force || now.timeIntervalSince(lastSystemRefresh) >= 2 {
+        case .overview, .performance, .systemInfo:
+            if force || now.timeIntervalSince(lastSystemRefresh) >= MonitoringRefreshPolicy.systemSummary {
                 let includeDiskUsage = now.timeIntervalSince(
                     lastDiskUsageRefresh
-                ) >= 300
+                ) >= MonitoringRefreshPolicy.systemSummary
                 system = SystemReader.readSystem(
                     preserving: system,
                     includeStatic: false,
@@ -458,21 +531,32 @@ final class SensorStore:
             readAdvancedSnapshot(publishData: true)
             readAdvanced = true
         case .battery:
-            if force || now.timeIntervalSince(lastBatteryRefresh) >= 2 {
+            if force
+                || now.timeIntervalSince(lastBatteryRefresh)
+                    >= batteryLiveRefreshInterval {
                 let includeSlow = now.timeIntervalSince(
                     lastBatterySlowRefresh
-                ) >= 300
+                ) >= batterySlowRefreshInterval
+                let includeMedium = includeSlow || now.timeIntervalSince(
+                    lastBatteryMediumRefresh
+                ) >= batteryMediumRefreshInterval
                 battery = SystemReader.readBattery(
                     preserving: battery,
                     includeStatic: false,
+                    includeMedium: includeMedium,
                     includeSlow: includeSlow
                 )
                 lastBatteryRefresh = now
+                if includeMedium {
+                    lastBatteryMediumRefresh = now
+                }
                 if includeSlow {
                     lastBatterySlowRefresh = now
                 }
             }
-        case .network, .about:
+            readAdvancedSnapshot(publishData: true)
+            readAdvanced = true
+        case .network, .ports, .processes, .about:
             break
         }
         if !readAdvanced,
@@ -550,6 +634,9 @@ final class SensorStore:
         switch selectedSection ?? .overview {
         case .overview:
             updated.telemetry["Power"] = snapshot.telemetry["Power"]
+        case .battery:
+            updated.telemetry["Power"] = snapshot.telemetry["Power"]
+            updated.livePower = snapshot.livePower
         case .motion:
             updated.motion = snapshot.motion
         case .environment:
@@ -561,7 +648,7 @@ final class SensorStore:
             updated.telemetry["Fans"] = snapshot.telemetry["Fans"]
         case .storage:
             updated.storageSMART = snapshot.storageSMART
-        case .trackpad, .battery, .network, .about:
+        case .trackpad, .network, .ports, .performance, .processes, .systemInfo, .about:
             break
         }
         if updated != advanced {
@@ -629,6 +716,9 @@ final class SensorStore:
             !lastLine.isEmpty else {
             return nil
         }
+        if Self.isXcodeSelectPythonFailure(log) {
+            return "高级传感器启动失败：系统 /usr/bin/python3 需要 Xcode Command Line Tools。请安装 python.org 或 Homebrew Python 后重试。"
+        }
         return "高级传感器启动失败：\(lastLine)"
     }
 
@@ -643,29 +733,12 @@ final class SensorStore:
             }) == true else {
                 return
             }
-            if !metrics.isEmpty {
-                updated.telemetry["Temperature"] = metrics
-                temperatureDiscoveryStartedAt = nil
-            }
+        }
+        guard !metrics.isEmpty else {
             return
         }
-        guard !expandedTemperatureGroups.isEmpty else {
-            return
-        }
-        var merged = Dictionary(
-            uniqueKeysWithValues: (
-                updated.telemetry["Temperature"] ?? []
-            ).map { ($0.id, $0) }
-        )
-        for metric in metrics
-        where expandedTemperatureGroups.contains(
-            temperatureCategory(for: metric.name)
-        ) {
-            merged[metric.id] = metric
-        }
-        updated.telemetry["Temperature"] = merged.values.sorted {
-            $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
+        updated.telemetry["Temperature"] = metrics
+        temperatureDiscoveryStartedAt = nil
     }
 
     private func updateMagicAngle(_ angle: Double?, now: Date = Date()) {
@@ -751,9 +824,11 @@ final class SensorStore:
     }
 
     nonisolated private static func launchPrivilegedHelper(
+        pythonPath: String,
         helperPath: String,
         ismcPath: String,
         fanProbePath: String,
+        powerProbePath: String,
         smartctlPath: String,
         outputPath: String,
         stopPath: String,
@@ -761,12 +836,13 @@ final class SensorStore:
         configPath: String
     ) -> LaunchResult {
         let command = [
-            "/usr/bin/python3", "-u",
+            shellQuote(pythonPath), "-u",
             shellQuote(helperPath),
             "--output", shellQuote(outputPath),
             "--stop", shellQuote(stopPath),
             "--ismc", shellQuote(ismcPath),
             "--fan-probe", shellQuote(fanProbePath),
+            "--power-probe", shellQuote(powerProbePath),
             "--smartctl", shellQuote(smartctlPath),
             "--config", shellQuote(configPath),
             ">", shellQuote(logPath),
@@ -822,7 +898,6 @@ final class SensorStore:
             "activeSection": appIsActive
                 ? (selectedSection ?? .overview).rawValue
                 : "inactive",
-            "expandedTemperatureGroups": expandedTemperatureGroups.sorted(),
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
             return
@@ -839,5 +914,80 @@ final class SensorStore:
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\""
+    }
+
+    nonisolated private static func resolvePythonInterpreter() -> String? {
+        var candidates: [String] = []
+        if let bundled = Bundle.main.url(
+            forResource: "python3",
+            withExtension: nil
+        )?.path {
+            candidates.append(bundled)
+        }
+        candidates.append(contentsOf: [
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3",
+            "/Library/Developer/CommandLineTools/usr/bin/python3",
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        ])
+        if developerToolsAvailable() {
+            candidates.append("/usr/bin/python3")
+        }
+
+        var seen = Set<String>()
+        for candidate in candidates where seen.insert(candidate).inserted {
+            if isUsablePython(candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func developerToolsAvailable() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["-p"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func isUsablePython(_ path: String) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            return false
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = [
+            "-c",
+            "import ctypes,json,subprocess,sys,threading; raise SystemExit(0 if sys.version_info[0] == 3 else 1)",
+        ]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func isXcodeSelectPythonFailure(_ text: String) -> Bool {
+        text.localizedCaseInsensitiveContains("xcode-select")
+            || text.localizedCaseInsensitiveContains("man xcode-select")
+            || text.localizedCaseInsensitiveContains("command line developer tools")
     }
 }

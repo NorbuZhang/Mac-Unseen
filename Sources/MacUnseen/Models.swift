@@ -1,9 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import Foundation
 
-enum DashboardSection: String, CaseIterable, Identifiable {
+enum DashboardSection: String, CaseIterable, Identifiable, Sendable {
     case overview
+    case performance
+    case processes
+    case systemInfo
+    case ports
     case motion
     case environment
     case trackpad
@@ -19,6 +21,10 @@ enum DashboardSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .overview: tr("总览")
+        case .performance: tr("实时性能")
+        case .processes: tr("进程")
+        case .systemInfo: tr("系统信息")
+        case .ports: tr("端口与外设")
         case .motion: tr("运动与震动")
         case .environment: tr("屏幕角度与环境光")
         case .trackpad: tr("触控板")
@@ -26,7 +32,7 @@ enum DashboardSection: String, CaseIterable, Identifiable {
         case .fans: tr("风扇")
         case .battery: tr("电池与电源")
         case .storage: tr("存储")
-        case .network: tr("网络与接口")
+        case .network: tr("网络")
         case .about: tr("说明")
         }
     }
@@ -34,6 +40,10 @@ enum DashboardSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .overview: "gauge.with.dots.needle.67percent"
+        case .performance: "chart.xyaxis.line"
+        case .processes: "list.bullet.rectangle"
+        case .systemInfo: "desktopcomputer"
+        case .ports: "cable.connector"
         case .motion: "waveform.path.ecg"
         case .environment: "sun.max"
         case .trackpad: "hand.point.up.left"
@@ -45,6 +55,18 @@ enum DashboardSection: String, CaseIterable, Identifiable {
         case .about: "info.circle"
         }
     }
+}
+
+struct DashboardGroup: Identifiable {
+    let title: String
+    let sections: [DashboardSection]
+    var id: String { title }
+    static let all: [DashboardGroup] = [
+        .init(title: "性能与系统", sections: [.overview, .performance, .processes, .systemInfo]),
+        .init(title: "硬件状态", sections: [.battery, .temperature, .fans, .storage]),
+        .init(title: "连接与接口", sections: [.network, .ports]),
+        .init(title: "交互传感器", sections: [.motion, .environment, .trackpad]),
+    ]
 }
 
 struct Metric: Identifiable, Hashable {
@@ -140,7 +162,7 @@ struct TrackpadDetails: Equatable {
     var running = false
 }
 
-struct SystemSnapshot: Equatable {
+struct SystemSnapshot: Equatable, Sendable {
     var modelName = "Mac"
     var modelIdentifier = ""
     var chipName = ""
@@ -161,7 +183,10 @@ struct BatterySnapshot: Equatable {
     var voltage: Double?
     var amperage: Double?
     var designCapacity: Double?
+    var nominalCapacity: Double?
     var maximumCapacity: Double?
+    var qmaxCapacity: Double?
+    var healthPercentage: Double?
     var rawMaximumCapacity: Double?
     var rawCurrentCapacity: Double?
     var charging = false
@@ -290,6 +315,15 @@ struct NetworkSnapshot: Equatable, Sendable {
     }
 }
 
+struct LivePowerSnapshot: Equatable {
+    var inputPower: Double?
+    var inputVoltage: Double?
+    var inputCurrent: Double?
+    var batteryPower: Double?
+    var systemPower: Double?
+    var timestamp: Date?
+}
+
 struct AdvancedSnapshot: Equatable {
     var status = "未启动"
     var timestamp: Date?
@@ -298,6 +332,7 @@ struct AdvancedSnapshot: Equatable {
     var motion = MotionReading()
     var environment = EnvironmentReading()
     var storageSMART = StorageSMARTSnapshot()
+    var livePower = LivePowerSnapshot()
     var telemetry: [String: [Metric]] = [:]
     var collectorErrors: [String: String] = [:]
     var errors: [String] = []

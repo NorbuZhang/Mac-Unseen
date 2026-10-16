@@ -1,9 +1,20 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct EnvironmentView: View {
     @EnvironmentObject private var store: SensorStore
+    @StateObject private var accordion = AccordionController()
+    @State private var showingAccordion = false
+
+    private var accordionSensorReady: Bool {
+        store.advancedSensorsActive
+            && store.advanced.capabilities["lidAngle"] == "available"
+            && store.advanced.collectorTimestamps["lidAngle"] != nil
+    }
+
+    private func updateAccordionAvailability() {
+        accordion.setAvailable(NSApp.isActive && accordionSensorReady
+            && !store.isMagicAnglePresented)
+    }
 
     private var ambientIsWarm: Bool {
         let channels = store.advanced.environment.spectralChannels
@@ -27,17 +38,14 @@ struct EnvironmentView: View {
             subtitle: "屏幕铰链、环境照度和颜色通道"
         ) {
             if store.advancedSensorsActive {
-                GeometryReader { geometry in
-                    let environmentWidth = max(
-                        380,
-                        min(geometry.size.width * 0.34, 500)
-                    )
-                    HStack(alignment: .top, spacing: 16) {
-                        Card(
+                EnvironmentTopCardLayout {
+                    Card(
                             title: "屏幕角度",
                             symbol: "laptopcomputer",
                             tint: .cyan,
-                            info: "它表示屏幕与键盘底座之间大约张开了多少度。屏幕合上时接近 0°，正常使用时通常在 90° 到 130° 左右。这个隐藏传感器的原始报告只提供整数度，所以界面不显示小数；轻微晃动或铰链结构也可能让读数在相邻两度之间跳动。"
+                            info: "它表示屏幕与键盘底座之间大约张开了多少度。屏幕合上时接近 0°，正常使用时通常在 90° 到 130° 左右。这个隐藏传感器的原始报告只提供整数度，所以界面不显示小数；轻微晃动或铰链结构也可能让读数在相邻两度之间跳动。",
+                            infoActionTitle: "一架藏起来的手风琴…",
+                            infoAction: { showingAccordion = true }
                         ) {
                             let capability =
                                 store.advanced.capabilities["lidAngle"]
@@ -69,14 +77,9 @@ struct EnvironmentView: View {
                                 }
                             }
                         }
-                        .frame(
-                            maxWidth: .infinity,
-                            minHeight: 180,
-                            maxHeight: 180,
-                            alignment: .top
-                        )
+                    .frame(maxHeight: .infinity, alignment: .top)
 
-                        Card(
+                    Card(
                             title: "环境光",
                             symbol: "sun.max.fill",
                             tint: ambientTint,
@@ -96,12 +99,7 @@ struct EnvironmentView: View {
                                 }
                             }
                         }
-                        .frame(
-                            width: environmentWidth,
-                            height: 180,
-                            alignment: .top
-                        )
-                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .frame(height: 180)
                 .animation(.easeInOut(duration: 0.35), value: ambientIsWarm)
@@ -131,6 +129,21 @@ struct EnvironmentView: View {
             } else {
                 AdvancedAccessCard()
             }
+        }
+        .background(AccordionWindowReader { accordion.window = $0 })
+        .sheet(isPresented: $showingAccordion) {
+            AccordionSettingsView(controller: accordion, sensorReady: accordionSensorReady)
+        }
+        .onAppear { updateAccordionAvailability() }
+        .onDisappear { accordion.setEnabled(false) }
+        .onChange(of: store.isMagicAnglePresented) { updateAccordionAvailability() }
+        .onChange(of: accordionSensorReady) { updateAccordionAvailability() }
+        .onReceive(store.$advanced) { accordion.accept($0) }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            accordion.setAvailable(false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            updateAccordionAvailability()
         }
     }
 
@@ -166,6 +179,72 @@ struct EnvironmentView: View {
 
     private func isUnavailable(_ capability: String?) -> Bool {
         capability == "unsupported" || capability == "unreadable"
+    }
+}
+
+struct EnvironmentTopCardLayout: Layout {
+    static let spacing: CGFloat = 16
+    static let angleFraction: CGFloat = 0.5
+
+    static func widths(totalWidth: CGFloat) -> (angle: CGFloat, ambient: CGFloat) {
+        let available = max(totalWidth - spacing, 0)
+        let width = available * angleFraction
+        return (width, width)
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let width = proposal.width ?? subviews.reduce(CGFloat.zero) {
+            $0 + $1.sizeThatFits(.unspecified).width
+        } + Self.spacing
+        let widths = Self.widths(totalWidth: width)
+        let proposedHeight = proposal.height
+        let heights = subviews.prefix(2).enumerated().map { index, subview in
+            subview.sizeThatFits(
+                ProposedViewSize(
+                    width: index == 0 ? widths.angle : widths.ambient,
+                    height: proposedHeight
+                )
+            ).height
+        }
+        return CGSize(
+            width: width,
+            height: proposal.height ?? heights.max() ?? 0
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count >= 2 else {
+            return
+        }
+        let widths = Self.widths(totalWidth: bounds.width)
+        subviews[0].place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: widths.angle,
+                height: bounds.height
+            )
+        )
+        subviews[1].place(
+            at: CGPoint(
+                x: bounds.minX + widths.angle + Self.spacing,
+                y: bounds.minY
+            ),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: widths.ambient,
+                height: bounds.height
+            )
+        )
     }
 }
 

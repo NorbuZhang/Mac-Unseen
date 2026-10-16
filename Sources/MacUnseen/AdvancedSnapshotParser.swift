@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import Foundation
 
 enum AdvancedSnapshotParser {
@@ -98,6 +96,19 @@ enum AdvancedSnapshotParser {
             )
             snapshot.storageSMART.temperature = number(smart["temperature"])
             snapshot.storageSMART.passed = smart["passed"] as? Bool
+        }
+
+        if let livePower = root["livePower"] as? [String: Any] {
+            snapshot.livePower.inputPower = number(livePower["inputPower"])
+            snapshot.livePower.inputVoltage = number(livePower["inputVoltage"])
+            snapshot.livePower.inputCurrent = number(livePower["inputCurrent"])
+            snapshot.livePower.batteryPower = number(livePower["batteryPower"])
+            snapshot.livePower.systemPower = number(livePower["systemPower"])
+            if let timestamp = number(livePower["timestamp"]) {
+                snapshot.livePower.timestamp = Date(
+                    timeIntervalSince1970: timestamp
+                )
+            }
         }
 
         if let ismc = root["ismc"] as? [String: Any] {

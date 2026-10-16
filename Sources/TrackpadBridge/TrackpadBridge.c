@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 /*
  * Multitouch data structures and private API declarations are adapted from
  * Kyome22/OpenMultitouchSupport, Copyright (c) 2019 Takuto Nakamura, under

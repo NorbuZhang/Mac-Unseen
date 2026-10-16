@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-# SPDX-License-Identifier: MPL-2.0
 """Read undocumented Apple SPU sensors and publish a local JSON snapshot.
 
 The helper is intentionally read-only. It enables reporting on AppleSPUHID
@@ -45,6 +44,7 @@ REPORT_INTERVAL_US = 5000
 SPU_FIRST_REPORT_TIMEOUT = 5.0
 IOHID_REPORT_TYPE_FEATURE = 2
 ACTIVE_SNAPSHOT_INTERVAL = 0.1
+BATTERY_SNAPSHOT_INTERVAL = 0.5
 SNAPSHOT_HEARTBEAT_INTERVAL = 2.0
 ACTIVE_LOOP_INTERVAL = 0.05
 LID_POLL_INTERVAL = 1.0 / 15.0
@@ -97,6 +97,7 @@ state = {
     "storageSmart": {
         "available": False,
     },
+    "livePower": {},
     "ismc": {},
     "errors": [],
 }
@@ -108,7 +109,6 @@ imu_hardware_rate = RAW_SAMPLE_RATE
 app_active = True
 high_rate_active = False
 active_section = "overview"
-expanded_temperature_groups = ()
 section_generation = 0
 sample_counter = 0
 sample_window_start = time.monotonic()
@@ -132,7 +132,7 @@ def append_error(message: str) -> None:
 
 def apply_configuration(configuration: dict) -> None:
     global app_active, high_rate_active, active_section
-    global expanded_temperature_groups, section_generation, imu_decimation
+    global section_generation, imu_decimation
     global imu_hardware_rate
     allowed_rates = (25, 50, 100, 200)
     requested = int(
@@ -144,20 +144,14 @@ def apply_configuration(configuration: dict) -> None:
     next_section = str(configuration.get("activeSection", "overview"))
     if not next_app_active:
         next_section = "inactive"
-    next_temperature_groups = tuple(
-        str(value)
-        for value in configuration.get("expandedTemperatureGroups", [])
-    )
     if (
         next_app_active != app_active
         or next_section != active_section
-        or next_temperature_groups != expanded_temperature_groups
     ):
         section_generation += 1
     app_active = next_app_active
     active_section = next_section
     high_rate_active = bool(configuration.get("highRateActive", False))
-    expanded_temperature_groups = next_temperature_groups
     effective_rate = (
         requested
         if app_active and high_rate_active and active_section == "motion"
@@ -311,6 +305,7 @@ def snapshot_for_section(section: str) -> dict:
     else:
         ismc_section = {
             "overview": "Power",
+            "battery": "Power",
             "fans": "Fans",
             "temperature": "Temperature",
         }.get(section)
@@ -320,6 +315,8 @@ def snapshot_for_section(section: str) -> dict:
                     state["ismc"].get(ismc_section, {})
                 )
             }
+        if section == "battery":
+            snapshot["livePower"] = copy.deepcopy(state["livePower"])
     return snapshot
 
 
@@ -351,8 +348,131 @@ def read_fan_speeds(fan_probe_path: str) -> tuple[int, dict]:
     return fan_count, values
 
 
+def metric_quantity(entry):
+    if not isinstance(entry, dict):
+        return None
+    quantity = smart_number(entry.get("quantity"))
+    if quantity is not None:
+        return quantity
+    value = entry.get("value")
+    if isinstance(value, str):
+        match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", value)
+        if match:
+            return float(match.group(0))
+    return smart_number(value)
+
+
+def probe_power_metrics(decoded: dict) -> dict:
+    metrics = {}
+    for field, name, key in (
+        ("inputPower", "DC In", "PDTR"),
+        ("systemPower", "System Total", "PSTR"),
+        ("batteryPower", "Battery", "PPBR"),
+    ):
+        value = smart_number(decoded.get(field))
+        if value is None or not math.isfinite(value) or abs(value) > 1000:
+            continue
+        metrics[name] = {
+            "key": key,
+            "type": "probe",
+            "value": f"{value:.6f} W",
+            "quantity": value,
+            "unit": "W",
+        }
+    return metrics
+
+
+def live_power_payload(values: dict, decoded: dict, timestamp: float) -> dict:
+    payload = {"timestamp": timestamp}
+    for field, name in (
+        ("inputPower", "DC In"),
+        ("batteryPower", "Battery"),
+        ("systemPower", "System Total"),
+    ):
+        quantity = metric_quantity(values.get(name))
+        if quantity is not None and math.isfinite(quantity):
+            payload[field] = quantity
+    input_voltage = smart_number(decoded.get("inputVoltage"))
+    if (
+        input_voltage is not None
+        and math.isfinite(input_voltage)
+        and 0 < input_voltage <= 100
+    ):
+        payload["inputVoltage"] = input_voltage
+        input_power = smart_number(payload.get("inputPower"))
+        if input_power is not None and input_voltage > 0.1:
+            payload["inputCurrent"] = abs(input_power) / input_voltage
+    return payload
+
+
+def read_ismc_power(ismc_path: str) -> dict:
+    process = subprocess.run(
+        [ismc_path, "-o", "json", "power"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    output = process.stdout.strip()
+    decoded = json.loads(output) if output else {}
+    values = normalized_ismc_section(decoded, "Power")
+    if not values:
+        raise RuntimeError("iSMC power returned no readings")
+    return values
+
+
+def poll_live_power(power_probe_path: str, ismc_path: str) -> None:
+    while not stop_event.is_set():
+        generation = section_generation
+        if not app_active or active_section != "battery":
+            wait_for_configuration_change(0.25, generation)
+            continue
+
+        values = {}
+        decoded = {}
+        error = None
+        used_fallback = False
+        try:
+            process = subprocess.run(
+                [power_probe_path],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            decoded = json.loads(process.stdout.strip() or "{}")
+            values = probe_power_metrics(decoded)
+            if process.returncode != 0 or not values:
+                message = process.stderr.strip().splitlines()
+                raise RuntimeError(
+                    message[-1]
+                    if message
+                    else "live power probe returned no readings"
+                )
+        except Exception as exc:
+            used_fallback = True
+            probe_error = f"LivePowerProbe: {exc}"
+            try:
+                values = read_ismc_power(ismc_path)
+                decoded = {}
+            except Exception as fallback_exc:
+                error = f"{probe_error}; iSMC fallback: {fallback_exc}"
+
+        if values:
+            now = time.time()
+            with state_lock:
+                state["livePower"] = live_power_payload(values, decoded, now)
+                state.setdefault("ismc", {})["Power"] = values
+                state["collectorTimestamps"]["livePower"] = now
+                state["collectorTimestamps"]["power"] = now
+            set_capability("power", "available")
+        elif error:
+            set_capability("power", "unreadable")
+        set_collector_error("livePower", error)
+        wait_for_configuration_change(1.0 if used_fallback else 0.5, generation)
+
+
 def poll_ismc(ismc_path: str, fan_probe_path: str) -> None:
-    last_temperature_generation = -1
     while not stop_event.is_set():
         section = active_section
         generation = section_generation
@@ -364,10 +484,7 @@ def poll_ismc(ismc_path: str, fan_probe_path: str) -> None:
         elif app_active and section == "fans":
             collector = "fans"
             command = "fans"
-        elif app_active and section == "temperature" and (
-            expanded_temperature_groups
-            or generation != last_temperature_generation
-        ):
+        elif app_active and section == "temperature":
             collector = "temperature"
             command = "temp"
         if command is None:
@@ -458,8 +575,6 @@ def poll_ismc(ismc_path: str, fan_probe_path: str) -> None:
                 telemetry[section_name] = values
                 state["collectorTimestamps"][collector] = time.time()
             set_collector_error(collector, collector_error)
-            if collector == "temperature":
-                last_temperature_generation = generation
             if (
                 collector_error is None
                 and not hardware_absent
@@ -935,6 +1050,7 @@ def poll_lid_angle() -> None:
                 if angle <= 0x1FF:
                     with state_lock:
                         state["environment"]["lidAngle"] = float(angle)
+                        state["collectorTimestamps"]["lidAngle"] = time.time()
                     mark_spu_report("lidAngle")
             stop_event.wait(LID_POLL_INTERVAL)
     except Exception as exc:
@@ -1250,6 +1366,7 @@ def main() -> int:
     parser.add_argument("--stop", required=True)
     parser.add_argument("--ismc", required=True)
     parser.add_argument("--fan-probe", required=True)
+    parser.add_argument("--power-probe", required=True)
     parser.add_argument("--smartctl", required=True)
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
@@ -1273,6 +1390,12 @@ def main() -> int:
         daemon=True,
     )
     telemetry_thread.start()
+    live_power_thread = threading.Thread(
+        target=poll_live_power,
+        args=(args.power_probe, args.ismc),
+        daemon=True,
+    )
+    live_power_thread.start()
     environment_thread = threading.Thread(
         target=poll_environment_lux, daemon=True
     )
@@ -1322,6 +1445,8 @@ def main() -> int:
             write_interval = 2.0
         elif active_section in ("motion", "environment"):
             write_interval = ACTIVE_SNAPSHOT_INTERVAL
+        elif active_section == "battery":
+            write_interval = BATTERY_SNAPSHOT_INTERVAL
         elif active_section in ("overview", "temperature", "fans"):
             write_interval = 1.0
         elif active_section == "storage":

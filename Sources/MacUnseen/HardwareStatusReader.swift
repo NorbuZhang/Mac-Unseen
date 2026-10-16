@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import Darwin
 import CoreWLAN
 import Foundation
@@ -140,7 +138,7 @@ enum HardwareStatusReader {
         return StorageSnapshot(disks: disks, updatedAt: Date())
     }
 
-    private static func networkSnapshot(
+    static func networkSnapshot(
         profiler: [String: Any],
         preserving previous: NetworkSnapshot,
         includePorts: Bool
@@ -277,6 +275,10 @@ enum HardwareStatusReader {
         let deviceName: String
         let protocolName: String
         let speed: String
+
+        var isHub: Bool {
+            deviceName.localizedCaseInsensitiveContains("hub")
+        }
     }
 
     private static func connectedUSBDevices(
@@ -314,13 +316,27 @@ enum HardwareStatusReader {
     ) -> [PortSnapshot] {
         var ports = thunderboltPorts
         var unmatched: [USBPortConnection] = []
+        let hasConnectedThunderboltDevice = ports.contains {
+            $0.connected && $0.protocolName == "Thunderbolt / USB4"
+        }
+        let hasCompanionUSBHubPair = hasConnectedThunderboltDevice
+            && usbConnections.filter(\.isHub).count >= 2
 
         for connection in usbConnections {
+            if hasCompanionUSBHubPair && connection.isHub {
+                continue
+            }
             guard let portID = connection.portID,
                   let index = ports.firstIndex(where: {
                       $0.id == "tb-\(portID)"
                   }) else {
                 unmatched.append(connection)
+                continue
+            }
+            // A USB4/Thunderbolt display often exposes a USB 2 and USB 3 hub
+            // alongside the display link. They are functions behind the same
+            // receptacle, not additional occupied physical ports.
+            if ports[index].connected {
                 continue
             }
             ports[index].connected = true
@@ -330,6 +346,9 @@ enum HardwareStatusReader {
         }
 
         for connection in unmatched {
+            if hasConnectedThunderboltDevice && connection.isHub {
+                continue
+            }
             var port = PortSnapshot()
             port.id = "usb-port-\(connection.location)-\(connection.deviceName)"
             port.name = "USB-C / 雷雳接口"
@@ -474,13 +493,40 @@ enum HardwareStatusReader {
             device.id = "tb-\(stringValue(dictionary["route_string_key"]))-\(name)"
             device.name = name
             device.protocolName = "Thunderbolt / USB4"
-            device.speed = dictionary["current_speed_key"] as? String
-                ?? dictionary["link_speed_key"] as? String
-                ?? ""
+            device.speed = thunderboltLinkSpeed(in: dictionary)
             device.vendor = dictionary["vendor_name_key"] as? String ?? ""
             result.append(device)
         }
         collectThunderboltDevices(in: dictionary["_items"], result: &result)
+    }
+
+    private static func thunderboltLinkSpeed(
+        in value: Any
+    ) -> String {
+        if let dictionary = value as? [String: Any] {
+            if let speed = dictionary["current_speed_key"] as? String,
+               !speed.isEmpty {
+                return speed
+            }
+            if let speed = dictionary["link_speed_key"] as? String,
+               !speed.isEmpty {
+                return speed
+            }
+            for child in dictionary.values {
+                let speed = thunderboltLinkSpeed(in: child)
+                if !speed.isEmpty {
+                    return speed
+                }
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                let speed = thunderboltLinkSpeed(in: child)
+                if !speed.isEmpty {
+                    return speed
+                }
+            }
+        }
+        return ""
     }
 
     private static func nvmeTrimValues(

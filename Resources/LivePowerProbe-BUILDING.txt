@@ -1,0 +1,4 @@
+LivePowerProbe is built from Tools/live_power_probe.c together with the bundled
+iSMC gosmc/smc.c and smc.h sources. Build it with clang and link IOKit and
+CoreFoundation. The complete shared SMC source and license are included under
+Contents/Resources/Source/FanSpeedProbe in the packaged application.

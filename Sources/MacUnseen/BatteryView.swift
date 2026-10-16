@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MPL-2.0
-
 import SwiftUI
 
 struct BatteryView: View {
@@ -49,7 +47,7 @@ struct BatteryView: View {
                         ),
                         Metric(
                             name: "实时功率",
-                            value: optional(batteryPower(store.battery), digits: 2),
+                            value: liveBatteryPowerValue,
                             unit: "W",
                             info: "这是用电池实时电压乘以电流估算出的功率，并取绝对值方便阅读。它可以粗略理解为电池此刻充入或输出能量的速度：数值越大，通常代表充电更快，或电脑正在消耗更多电量。"
                         ),
@@ -111,7 +109,7 @@ struct BatteryView: View {
                             name: "最大容量",
                             value: optional(store.battery.maximumCapacity, digits: 0),
                             unit: "mAh",
-                            info: "电池管理系统提供的 NominalChargeCapacity。它经过平滑处理，用于表示电池当前预计充满时可容纳的电量。新电池可能略高于标称设计容量。"
+                            info: "Qmax 是电池管理系统估算的电芯容量，不是固定不变的标称值。充放电后，系统可能重新估算，所以这个数值会升高或降低；一次变化不等于电池突然变好或变差。这里显示各电芯 Qmax 的最低值。若机型不提供 Qmax，则使用电池包报告的满充容量。"
                         ),
                         Metric(
                             name: "补偿容量",
@@ -120,7 +118,7 @@ struct BatteryView: View {
                                 digits: 0
                             ),
                             unit: "mAh",
-                            info: "底层 AppleRawMaxCapacity，也称补偿后的满充容量。它会随温度、荷电状态和电池模型校准发生短期波动，因此不再直接用于计算系统健康度。"
+                            info: "电池包报告的 AppleRawMaxCapacity；部分机型使用同义的 FullChargeCapacity。它包含当前温度、保留区和校准补偿，因此不直接作为最大容量或健康度。"
                         ),
                         Metric(
                             name: "当前原始电量",
@@ -131,7 +129,7 @@ struct BatteryView: View {
                             name: "健康度",
                             value: batteryHealth(store.battery),
                             unit: "%",
-                            info: "使用最大容量除以设计容量得到的实际比例，不再封顶为 100%。新电池实际容量高于标称设计容量时，健康度可能显示为 100% 以上。"
+                            info: "通常显示 macOS 直接报告的 MaxCapacity 百分比；系统会把健康电池封顶为 100%。若可靠的 Qmax 与设计容量之比超过 100%，则显示这个未封顶比例；系统未提供百分比时也使用容量比估算。"
                         ),
                     ],
                     tint: .teal
@@ -196,17 +194,17 @@ struct BatteryView: View {
                         ),
                         Metric(
                             name: "实时输入功率",
-                            value: optional(store.battery.liveInputPower, digits: 2),
+                            value: liveInputPowerValue,
                             unit: "W"
                         ),
                         Metric(
                             name: "实时输入电压",
-                            value: optional(store.battery.liveInputVoltage, digits: 2),
+                            value: liveInputVoltageValue,
                             unit: "V"
                         ),
                         Metric(
                             name: "实时输入电流",
-                            value: optional(store.battery.liveInputCurrent, digits: 3),
+                            value: liveInputCurrentValue,
                             unit: "A"
                         ),
                     ],
@@ -240,5 +238,80 @@ struct BatteryView: View {
                 }
             }
         }
+    }
+
+    private var liveBatteryPowerValue: String {
+        if let power = freshLivePower?.batteryPower {
+            return format(abs(power), digits: 2)
+        }
+        if let power = livePowerMetricValue(named: ["Battery"]) {
+            return power
+        }
+        if let power = batteryPower(store.battery), power > 0.01 {
+            return format(power, digits: 2)
+        }
+        return batteryPower(store.battery).map { format($0, digits: 2) }
+            ?? "-"
+    }
+
+    private var liveInputPowerValue: String {
+        if let power = freshLivePower?.inputPower {
+            return format(abs(power), digits: 2)
+        }
+        if let power = livePowerMetricValue(named: ["DC In"]) {
+            return power
+        }
+        if let power = store.battery.liveInputPower, power > 0.01 {
+            return format(power, digits: 2)
+        }
+        return store.battery.liveInputPower.map { format($0, digits: 2) }
+            ?? "-"
+    }
+
+    private var liveInputVoltageValue: String {
+        optional(
+            freshLivePower?.inputVoltage ?? store.battery.liveInputVoltage,
+            digits: 2
+        )
+    }
+
+    private var liveInputCurrentValue: String {
+        optional(
+            freshLivePower?.inputCurrent ?? store.battery.liveInputCurrent,
+            digits: 3
+        )
+    }
+
+    private var freshLivePower: LivePowerSnapshot? {
+        guard store.advancedSensorsActive,
+              let timestamp = store.advanced.livePower.timestamp else {
+            return nil
+        }
+        let age = Date().timeIntervalSince(timestamp)
+        guard age >= -1, age <= 2 else {
+            return nil
+        }
+        return store.advanced.livePower
+    }
+
+    private func livePowerMetricValue(named names: Set<String>) -> String? {
+        guard store.advancedSensorsActive else {
+            return nil
+        }
+        let timestamp = store.advanced.collectorTimestamps["livePower"]
+            ?? store.advanced.collectorTimestamps["power"]
+        guard let timestamp,
+              Date().timeIntervalSince(timestamp) <= 2 else {
+            return nil
+        }
+        guard let metric = store.advanced.telemetry["Power"]?.first(
+            where: { names.contains($0.name) }
+        ) else {
+            return nil
+        }
+        if let value = Double(metric.value) {
+            return format(abs(value), digits: 2)
+        }
+        return metric.value == "-" ? nil : metric.value
     }
 }
