@@ -31,12 +31,32 @@
 
 | 版本 | 怎么选 |
 | --- | --- |
-| 标准版 | 下载更小，高级传感器使用电脑上已有的 Python 3。 |
+| 标准版 | 下载更小，适用于已安装Python 3的Mac。 |
 | 内置 Python 版 | 自带 Python；没装 Python，或不确定有没有，选这个即可。 |
 
 基础监控不需要 Python。当前发布包未经过 Apple 公证，首次打开若被 macOS 拦截，可前往 **系统设置 → 隐私与安全性 → 仍要打开**。
 
 大多数读数无需管理员权限。需要高级传感器、风扇、功耗或完整 NVMe SMART 数据时，点击 **启用隐藏传感器**，按系统提示授权。显示 Wi-Fi 名称可能还需要定位权限。
+
+## 运行方式
+
+如果你下载的是已经打包好的 App，解压后可以把 `Mac Unseen.app` 移到 `Applications` 里或直接运行。
+社区构建版本可能没有经过 Apple notarization，第一次打开时 macOS 可能会拦截。如果遇到这种情况：
+
+<img width="269" height="243" alt="image" src="https://github.com/user-attachments/assets/1b356c3d-ab7a-4569-86c3-e3a23d974f58" />
+
+1. 打开 `系统设置`。
+2. 进入 `隐私与安全性`。
+3. 滚动到和 Mac Unseen 相关的安全提示。
+4. 选择 `仍要打开`，然后在下一次启动提示里确认。
+<img width="1436" height="1238" alt="image" src="https://github.com/user-attachments/assets/a1adc774-ccca-42ac-97ae-3057de35f82f" />
+
+
+也可以先尝试右键点击 App 选择 `打开`，但较新的 macOS 版本仍然可能要求你到 `隐私与安全性` 里确认。
+
+大多数基础页面不需要管理员权限。隐藏传感器、风扇遥测、SMC 功耗数据，以及内置 NVMe SSD 的完整 SMART 数据需要管理员授权，因为 macOS 没有通过普通公开 API 暴露这些读数。在应用里点击 `启用隐藏传感器`，然后批准 macOS 弹出的授权提示即可。
+
+Wi-Fi 名称显示可能还需要定位权限。macOS 会把当前 Wi-Fi 名称视为和位置相关的数据。Mac Unseen 只在本机显示这项信息。
 
 ## 隐私
 
