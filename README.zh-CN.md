@@ -3,6 +3,7 @@
 [English](README.md) · [下载](https://github.com/NorbuZhang/Mac-Unseen/releases) · [0.2.0 更新日志](RELEASE_NOTES_v0.2.0.md)
 
 看看你的 Mac 正在做什么：从 CPU、内存占用，到电池、温度和系统里不容易找到的传感器数据。Mac Unseen 使用 SwiftUI 开发，适用于 Apple Silicon Mac。
+<img width="2696" height="1642" alt="image" src="https://github.com/user-attachments/assets/72c33e3e-145c-429c-9fb9-9678a3367417" />
 
 
 ## 能看什么
