@@ -12,6 +12,7 @@ actor PerformanceReader {
     private var previousTime: TimeInterval?
     private var previousProcesses: [ProcessIdentity: UInt64] = [:]
     private var previousProcessTime: TimeInterval?
+    private var appMetadata: [String: ProcessApplication] = [:]
 
     func sample() -> PerformanceReading {
         let now = ProcessInfo.processInfo.systemUptime
@@ -53,7 +54,10 @@ actor PerformanceReader {
         }
         defer { MUFreeProcessSamples(pointer) }
         var next: [ProcessIdentity: UInt64] = [:]
-        let rows = UnsafeBufferPointer(start: pointer, count: Int(count)).map { item in
+        // The native bridge always terminates the path; reuse one scratch buffer.
+        var pathBuffer = [CChar](repeating: 0, count: 4096)
+        var liveApplications: Set<String> = []
+        var rows = UnsafeBufferPointer(start: pointer, count: Int(count)).map { item in
             let id = ProcessIdentity(pid: item.pid, startSeconds: item.start_seconds, startMicroseconds: item.start_microseconds)
             let cpuTime: UInt64? = item.has_usage != 0 ? item.cpu_nanoseconds : nil
             if let cpuTime { next[id] = cpuTime }
@@ -61,15 +65,47 @@ actor PerformanceReader {
             let label = withUnsafeBytes(of: &name) { raw in
                 String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
             }
+            let metadata: (String?, ProcessApplication?)
+            do {
+                let path = MUProcessPath(item.pid, id.startSeconds, id.startMicroseconds, &pathBuffer, UInt32(pathBuffer.count)) > 0
+                    ? pathBuffer.withUnsafeBufferPointer { String(cString: $0.baseAddress!) } : nil
+                var application: ProcessApplication?
+                if let path, let bundlePath = ProcessApplication.bundlePath(for: path) {
+                    liveApplications.insert(bundlePath)
+                    if let cached = appMetadata[bundlePath] { application = cached }
+                    else if let bundle = Bundle(path: bundlePath), bundle.infoDictionary?["CFBundlePackageType"] as? String == "APPL" {
+                        let name = (bundle.localizedInfoDictionary?["CFBundleDisplayName"] as? String)
+                            ?? (bundle.infoDictionary?["CFBundleDisplayName"] as? String)
+                            ?? (bundle.localizedInfoDictionary?["CFBundleName"] as? String)
+                            ?? (bundle.infoDictionary?["CFBundleName"] as? String)
+                            ?? URL(fileURLWithPath: bundlePath).deletingPathExtension().lastPathComponent
+                        let app = ProcessApplication(bundlePath: bundlePath, name: name)
+                        appMetadata[bundlePath] = app; application = app
+                    }
+                }
+                metadata = (path, application)
+            }
             return ProcessReading(
                 id: id, name: label.isEmpty ? "PID \(item.pid)" : label, uid: item.uid,
                 cpu: SampleDelta.processCPU(current: cpuTime, previous: previousProcesses[id], elapsed: elapsed),
                 memory: item.has_usage == 0 ? nil : Double(item.has_footprint != 0 ? item.footprint_bytes : item.resident_bytes),
-                usesFootprint: item.has_footprint != 0
+                usesFootprint: item.has_footprint != 0, parentPID: item.parent_pid,
+                executablePath: metadata.0, application: metadata.1
             )
         }
+        // Resolve parent ownership only against this sample, never a stale/reused PID.
+        rows = ProcessApplication.inheritingOwners(rows)
+        appMetadata = appMetadata.filter { liveApplications.contains($0.key) }
         previousProcesses = next; previousProcessTime = now
         return ProcessSnapshot(rows: rows, sampledAt: Date())
+    }
+
+    func sampleSystemRuntime() -> SystemRuntime {
+        var loads = [Double](repeating: 0, count: 3)
+        if getloadavg(&loads, 3) != 3 { loads = [] }
+        let count = MUProcessCount()
+        return SystemRuntime(uptime: ProcessInfo.processInfo.systemUptime, loads: loads,
+                             processCount: count >= 0 ? Int(count) : nil, sampledAt: Date())
     }
 
     nonisolated static func cpuCounters() -> [CPUCounters]? {
@@ -186,17 +222,25 @@ enum SystemIdentityReader {
         var boot = timeval()
         var size = MemoryLayout<timeval>.size
         let bootTime = sysctlbyname("kern.boottime", &boot, &size, nil, 0) == 0 ? Date(timeIntervalSince1970: Double(boot.tv_sec)) : nil
-        var performance: Int?, efficiency: Int?
+        var coreGroups: [CPUCoreGroup] = []
         for index in 0..<(integer("hw.nperflevels") ?? 0) {
-            let name = string("hw.perflevel\(index).name")?.lowercased() ?? ""
-            if name.contains("performance") { performance = integer("hw.perflevel\(index).physicalcpu") }
-            if name.contains("efficiency") { efficiency = integer("hw.perflevel\(index).physicalcpu") }
+            if let name = string("hw.perflevel\(index).name"),
+               let count = integer("hw.perflevel\(index).physicalcpu"), count > 0 {
+                coreGroups.append(CPUCoreGroup(name: name, count: count,
+                    l1InstructionBytes: unsignedInteger("hw.perflevel\(index).l1icachesize"),
+                    l1DataBytes: unsignedInteger("hw.perflevel\(index).l1dcachesize"),
+                    l2Bytes: unsignedInteger("hw.perflevel\(index).l2cachesize"),
+                    coresPerL2: integer("hw.perflevel\(index).cpusperl2")))
+            }
         }
         return SystemIdentity(osVersion: string("kern.osproductversion") ?? ProcessInfo.processInfo.operatingSystemVersionString,
             osBuild: string("kern.osversion") ?? "", kernel: string("kern.osrelease") ?? "",
             architecture: string("hw.machine") ?? "", physicalCores: integer("hw.physicalcpu"), logicalCores: integer("hw.logicalcpu"),
-            performanceCores: performance, efficiencyCores: efficiency, bootTime: bootTime,
-            gpuNames: PerformanceReader.gpus().map { gpu in gpu.cores.map { "\(gpu.name) · \($0) cores" } ?? gpu.name })
+            coreGroups: coreGroups, bootTime: bootTime,
+            gpuNames: PerformanceReader.gpus().map { gpu in gpu.cores.map { "\(gpu.name) · \($0) cores" } ?? gpu.name },
+            hostName: ProcessInfo.processInfo.hostName, packages: integer("hw.packages"),
+            pageBytes: unsignedInteger("hw.pagesize"), reportedFrequencyHz: unsignedInteger("hw.cpufrequency"),
+            l3Bytes: unsignedInteger("hw.l3cachesize"), virtualization: integer("kern.hv_support").map { $0 != 0 })
     }
     static func integer(_ key: String) -> Int? {
         var value: Int32 = 0, size = MemoryLayout<Int32>.size
@@ -209,5 +253,10 @@ enum SystemIdentityReader {
         var bytes = [CChar](repeating: 0, count: size)
         guard sysctlbyname(key, &bytes, &size, nil, 0) == 0 else { return nil }
         return String(decoding: bytes.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+    }
+    static func unsignedInteger(_ key: String) -> UInt64? {
+        var value: UInt64 = 0, size = MemoryLayout<UInt64>.size
+        guard sysctlbyname(key, &value, &size, nil, 0) == 0, size == 4 || size == 8 else { return nil }
+        return value > 0 ? value : nil
     }
 }

@@ -66,6 +66,17 @@ func formatBytes(_ bytes: Double) -> String {
     )
 }
 
+/// Explicit numeric conversion: passing Double.init to Optional.map can select
+/// init(bitPattern:) for UInt64, turning valid cache sizes into subnormal values.
+func formatHardwareBytes(_ bytes: UInt64?) -> String {
+    guard let bytes, bytes > 0 else { return "—" }
+    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"]
+    var amount = Double(bytes)
+    var unit = 0
+    while amount >= 1024, unit < units.count - 1 { amount /= 1024; unit += 1 }
+    return format(amount, digits: amount.rounded() == amount ? 0 : 2) + " " + units[unit]
+}
+
 func formatDuration(_ seconds: TimeInterval) -> String {
     let days = Int(seconds) / 86_400
     let hours = (Int(seconds) % 86_400) / 3_600
@@ -78,24 +89,8 @@ func formatDuration(_ seconds: TimeInterval) -> String {
 }
 
 func batteryHealth(_ battery: BatterySnapshot) -> String {
-    if let design = battery.designCapacity,
-       let qmax = battery.qmaxCapacity,
-       design > 0 {
-        let uncappedHealth = qmax / design * 100
-        if uncappedHealth > 100 {
-            return format(uncappedHealth, digits: 1)
-        }
-    }
-    if let systemHealth = battery.healthPercentage {
-        return format(systemHealth, digits: 1)
-    }
-    guard let design = battery.designCapacity,
-          let maximum = battery.maximumCapacity,
-          design > 0
-    else {
-        return "-"
-    }
-    return format(maximum / design * 100, digits: 1)
+    guard let health = battery.healthPercentage, health.isFinite, (0...100).contains(health) else { return "—" }
+    return format(health, digits: health.rounded() == health ? 0 : 1)
 }
 
 func batteryPower(_ battery: BatterySnapshot) -> Double? {

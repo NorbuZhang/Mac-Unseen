@@ -4,7 +4,7 @@ struct AboutView: View {
     var body: some View {
         Page(
             title: "关于",
-            subtitle: "Mac Unseen 0.1"
+            subtitle: "Mac Unseen " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
         ) {
             Card(title: "数据边界", symbol: "shield.lefthalf.filled", tint: .green) {
                 Text(tr(

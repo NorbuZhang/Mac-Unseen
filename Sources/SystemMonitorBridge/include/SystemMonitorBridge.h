@@ -2,7 +2,7 @@
 #define SYSTEM_MONITOR_BRIDGE_H
 #include <stdint.h>
 typedef struct {
-    int32_t pid;
+    int32_t pid, parent_pid;
     uint32_t uid;
     uint64_t start_seconds, start_microseconds;
     uint64_t cpu_nanoseconds, resident_bytes, footprint_bytes;
@@ -13,6 +13,9 @@ typedef struct {
 // Caller owns the returned allocation. Failure returns -1, not an empty list.
 int MUCopyProcessSamples(MUProcessSample **samples);
 void MUFreeProcessSamples(MUProcessSample *samples);
+int MUProcessPath(int32_t pid, uint64_t start_seconds, uint64_t start_microseconds, char *buffer, uint32_t size);
+// Enumerates PIDs only; does not collect per-process resource usage.
+int MUProcessCount(void);
 typedef struct {
     uint32_t index;
     uint64_t received_bytes, sent_bytes;

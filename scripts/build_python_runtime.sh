@@ -30,7 +30,28 @@ rm -rf "$RUNTIME_APP" "$RUNTIME_ZIP"
 ditto "$STANDARD_APP" "$RUNTIME_APP"
 
 mkdir -p "$CONTENTS/Frameworks" "$CONTENTS/Resources/Licenses"
-ditto "$PYTHON_FRAMEWORK" "$CONTENTS/Frameworks/Python.framework"
+# Bundle only the selected interpreter version, never other host installations.
+mkdir -p "$CONTENTS/Frameworks/Python.framework/Versions"
+ditto "$PYTHON_FRAMEWORK/Versions/$PYTHON_VERSION" "$PYTHON_ROOT"
+ln -s "$PYTHON_VERSION" "$CONTENTS/Frameworks/Python.framework/Versions/Current"
+ln -s Versions/Current/Python "$CONTENTS/Frameworks/Python.framework/Python"
+ln -s Versions/Current/Resources "$CONTENTS/Frameworks/Python.framework/Resources"
+
+# This is a private stdlib runtime for the sensor helper, not a Python SDK or
+# package manager. Only remove files from the staged copy; keep runtime modules
+# and the PSF license. Normal bytecode stays for fast startup.
+rm -rf \
+    "$PYTHON_ROOT/Resources/English.lproj/Documentation" \
+    "$PYTHON_ROOT/include" \
+    "$PYTHON_ROOT/Headers" \
+    "$PYTHON_ROOT/share" \
+    "$PYTHON_ROOT/bin" \
+    "$PYTHON_LIB/python$PYTHON_VERSION/test" \
+    "$PYTHON_LIB/python$PYTHON_VERSION/ensurepip" \
+    "$PYTHON_LIB/python$PYTHON_VERSION/site-packages"
+mkdir -p "$PYTHON_LIB/python$PYTHON_VERSION/site-packages"
+find "$PYTHON_LIB/python$PYTHON_VERSION" -type f \
+    \( -name '*.opt-1.pyc' -o -name '*.opt-2.pyc' \) -delete
 
 # The sensor helper never uses Python's Tk GUI stack. Removing these nested
 # frameworks keeps the runtime smaller and allows the relocated framework to
@@ -55,10 +76,28 @@ install -m 755 \
 # points back to /Library. Use Python.app's actual interpreter executable as
 # our native launcher, then remove the now-unused nested app from the bundle.
 rm -rf "$PYTHON_ROOT/Resources/Python.app"
+
+# Mac Unseen and its sensor tools target Apple Silicon. Keep only their matching
+# architecture in the embedded interpreter and native extensions.
+PYTHON_NATIVE_FILES=(
+    "$CONTENTS/Resources/python3.bin"
+    "$PYTHON_ROOT/Python"
+    "$PYTHON_DYNLOAD"/*.so
+    "$PYTHON_LIB"/*.dylib
+)
+for native_file in "${PYTHON_NATIVE_FILES[@]}"; do
+    [[ -L "$native_file" ]] && continue
+    /usr/bin/lipo "$native_file" -verify_arch arm64
+    if [[ "$(/usr/bin/lipo -archs "$native_file")" != "arm64" ]]; then
+        /usr/bin/lipo "$native_file" -thin arm64 -output "$native_file.arm64"
+        mv "$native_file.arm64" "$native_file"
+    fi
+done
 install_name_tool -change \
     "/Library/Frameworks/Python.framework/Versions/$PYTHON_VERSION/Python" \
     "@executable_path/../Frameworks/Python.framework/Versions/$PYTHON_VERSION/Python" \
     "$CONTENTS/Resources/python3.bin"
+install_name_tool -id "@rpath/Python.framework/Versions/$PYTHON_VERSION/Python" "$PYTHON_ROOT/Python"
 
 # python.org's extension modules and support libraries retain install names
 # rooted at /Library. They work on a development Mac with Python installed but
@@ -100,6 +139,22 @@ install_name_tool -id "@loader_path/libcrypto.3.dylib" \
 install_name_tool -id "@loader_path/libssl.3.dylib" \
     "$PYTHON_LIB/libssl.3.dylib"
 
+# Keep the remaining shipped terminal modules relocatable as well, even though
+# the current helper does not use them.
+for module in "$PYTHON_DYNLOAD"/_curses*.so; do
+    for library in libncurses.6.dylib libpanel.6.dylib; do
+        install_name_tool -change \
+            "/Library/Frameworks/Python.framework/Versions/$PYTHON_VERSION/lib/$library" \
+            "@loader_path/../../$library" "$module"
+    done
+done
+for library in libncurses.6.dylib libform.6.dylib libmenu.6.dylib libpanel.6.dylib; do
+    install_name_tool -id "@loader_path/$library" "$PYTHON_LIB/$library"
+    install_name_tool -change \
+        "/Library/Frameworks/Python.framework/Versions/$PYTHON_VERSION/lib/libncurses.6.dylib" \
+        "@loader_path/libncurses.6.dylib" "$PYTHON_LIB/$library"
+done
+
 cat > "$CONTENTS/Resources/python3" <<'EOF'
 #!/bin/zsh
 set -euo pipefail
@@ -107,6 +162,9 @@ APP_CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON_ROOT="$APP_CONTENTS/Frameworks/Python.framework/Versions/3.14"
 export PYTHONHOME="$PYTHON_ROOT"
 export PYTHONPATH="$PYTHON_ROOT/lib/python3.14"
+# Never write bytecode into a signed application bundle, including as root.
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONNOUSERSITE=1
 exec "$APP_CONTENTS/Resources/python3.bin" "$@"
 EOF
 chmod 755 "$CONTENTS/Resources/python3"
@@ -116,17 +174,10 @@ install -m 644 "$ROOT/Resources/Licenses/Python-3.14-PSF.txt" \
 # install_name_tool invalidates the python.org signatures. Explicitly re-sign
 # each modified Mach-O file; codesign --deep does not reliably replace invalid
 # signatures on nested extension modules.
-for module in \
-    "$PYTHON_DYNLOAD"/_zstd*.so \
-    "$PYTHON_DYNLOAD"/_hashlib*.so \
-    "$PYTHON_DYNLOAD"/_ssl*.so
-do
-    [[ -e "$module" ]] || continue
-    codesign --force --sign - "$module"
+for native_file in "${PYTHON_NATIVE_FILES[@]}"; do
+    [[ -L "$native_file" ]] && continue
+    codesign --force --sign - "$native_file"
 done
-codesign --force --sign - "$PYTHON_LIB/libzstd.1.5.7.dylib"
-codesign --force --sign - "$PYTHON_LIB/libcrypto.3.dylib"
-codesign --force --sign - "$PYTHON_LIB/libssl.3.dylib"
 codesign --force --deep --sign - "$CONTENTS/Frameworks/Python.framework"
 codesign --force --sign - "$CONTENTS/Resources/python3.bin"
 codesign --force --deep --sign - "$RUNTIME_APP"
@@ -135,9 +186,11 @@ codesign --verify --deep --strict --verbose=2 "$RUNTIME_APP"
 RUNTIME_IMPORT_CHECK="$(
     PYTHONHOME="$PYTHON_ROOT" \
     PYTHONPATH="$PYTHON_ROOT/lib/python$PYTHON_VERSION" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
     DYLD_PRINT_LIBRARIES=1 \
     "$CONTENTS/Resources/python3.bin" -c \
-        'import argparse,collections,copy,ctypes,ctypes.util,json,math,os,re,signal,struct,subprocess,sys,tempfile,threading,time' \
+        'import argparse,collections,copy,ctypes,ctypes.util,json,math,os,re,signal,struct,subprocess,sys,tempfile,threading,time,ssl,hashlib,compression.zstd,curses,curses.panel' \
         2>&1
 )"
 if print -r -- "$RUNTIME_IMPORT_CHECK" \

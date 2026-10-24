@@ -5,21 +5,23 @@ import IOKit
 
 enum HardwareStatusReader {
     static func readStorage(
-        includeDeviceMetadata: Bool = true
+        includeDeviceMetadata: Bool = true,
+        command: SystemCommand = SystemCommand()
     ) -> StorageSnapshot {
         let profiler = includeDeviceMetadata
-            ? profilerJSON(types: ["SPNVMeDataType"])
+            ? profilerJSON(types: ["SPNVMeDataType"], command: command)
             : [:]
         return storageSnapshot(profiler: profiler)
     }
 
     static func readNetwork(
         preserving previous: NetworkSnapshot = NetworkSnapshot(),
-        includePorts: Bool = true
+        includePorts: Bool = true,
+        command: SystemCommand = SystemCommand()
     ) -> NetworkSnapshot {
         let profiler = includePorts
             ? profilerJSON(
-                types: ["SPUSBHostDataType", "SPThunderboltDataType"]
+                types: ["SPUSBHostDataType", "SPThunderboltDataType"], command: command
             )
             : [:]
         return networkSnapshot(
@@ -101,6 +103,7 @@ enum HardwareStatusReader {
                 continue
             }
             disk.firmware = firmware
+            disk.mediumType = medium
             disk.capacity = number("Size", in: mediaProperties)
             disk.solidState = medium.localizedCaseInsensitiveContains("solid")
                 || disk.connection.localizedCaseInsensitiveContains("nvme")
@@ -554,22 +557,10 @@ enum HardwareStatusReader {
         return values
     }
 
-    private static func profilerJSON(types: [String]) -> [String: Any] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
-        process.arguments = types + ["-json", "-detailLevel", "mini"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return (try? JSONSerialization.jsonObject(with: data))
-                as? [String: Any] ?? [:]
-        } catch {
-            return [:]
-        }
+    private static func profilerJSON(types: [String], command: SystemCommand) -> [String: Any] {
+        guard let data = command.run(executable: "/usr/sbin/system_profiler",
+                arguments: types + ["-json", "-detailLevel", "mini", "-timeout", "25"], timeout: 28) else { return [:] }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     }
 
     private static func registryProperties(

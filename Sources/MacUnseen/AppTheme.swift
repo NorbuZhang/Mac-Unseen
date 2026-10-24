@@ -1,5 +1,14 @@
 import SwiftUI
 
+struct SubtlePressButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(configuration.isPressed ? 0.10 : 0))
+        }
+    }
+}
+
 enum DetailStyle: String, CaseIterable, Identifiable {
     case accent
     case standard
@@ -15,7 +24,7 @@ enum DetailStyle: String, CaseIterable, Identifiable {
 }
 
 private struct DetailStyleKey: EnvironmentKey {
-    static let defaultValue = DetailStyle.accent
+    static let defaultValue = DetailStyle.standard
 }
 
 extension EnvironmentValues {
@@ -26,6 +35,14 @@ extension EnvironmentValues {
 }
 
 enum AppPalette {
+    // Text needs more contrast than decorative fills. Keep the brand hue while
+    // resolving its foreground separately for light and dark appearances.
+    static let accentText = Color(nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua {
+            return NSColor(srgbRed: 0.40, green: 0.73, blue: 0.78, alpha: 1)
+        }
+        return NSColor(srgbRed: 0.10, green: 0.43, blue: 0.47, alpha: 1)
+    })
     static let accent = Color(
         red: 0.16,
         green: 0.52,

@@ -77,7 +77,7 @@ struct AccordionSettingsView: View {
 
             Text(tr("频繁或用力开合屏幕可能增加铰链磨损、影响使用寿命。请小幅、轻柔操作，避免长时间反复开合或强行推至极限角度。"))
                 .font(.caption)
-                .foregroundStyle(AppPalette.accent)
+                .foregroundStyle(AppPalette.accentText)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 

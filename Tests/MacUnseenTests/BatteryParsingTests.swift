@@ -3,6 +3,44 @@ import XCTest
 @testable import MacUnseen
 
 final class BatteryParsingTests: XCTestCase {
+    func testFullChargeRatioIsUncappedAndIndependentOfQmaxAndSystemHealth() throws {
+        var battery = BatterySnapshot(designCapacity: 6000, qmaxCapacity: 7000,
+                                      healthPercentage: 97, fullChargeCapacity: 6300)
+        XCTAssertEqual(try XCTUnwrap(battery.fullChargeCapacityRatio), 105, accuracy: 0.001)
+        XCTAssertEqual(batteryHealth(battery), "97")
+        battery.designCapacity = 6249
+        battery.fullChargeCapacity = 6089
+        XCTAssertEqual(try XCTUnwrap(battery.fullChargeCapacityRatio), 97.43959, accuracy: 0.0001)
+        battery.qmaxCapacity = nil
+        XCTAssertEqual(try XCTUnwrap(battery.fullChargeCapacityRatio), 97.43959, accuracy: 0.0001)
+    }
+
+    func testFullChargeRatioDoesNotInventMissingCapacityOrAcceptInvalidInputs() {
+        var battery = BatterySnapshot(designCapacity: 6000, nominalCapacity: 6200,
+                                      qmaxCapacity: 6500, healthPercentage: 100)
+        XCTAssertNil(battery.fullChargeCapacityRatio)
+        for invalid in [0, -1, Double.nan, Double.infinity] {
+            battery.fullChargeCapacity = invalid
+            XCTAssertNil(battery.fullChargeCapacityRatio)
+            battery.fullChargeCapacity = 6300
+            battery.designCapacity = invalid
+            XCTAssertNil(battery.fullChargeCapacityRatio)
+            battery.designCapacity = 6000
+        }
+        battery.designCapacity = nil
+        XCTAssertNil(battery.fullChargeCapacityRatio)
+    }
+
+    func testFullChargeAliasDoesNotPopulateQmaxOrSystemHealth() throws {
+        var battery = BatterySnapshot()
+        SystemReader.applyPackBatteryData(["DesignCapacity": 6000, "FullChargeCapacity": 6300,
+                                           "NominalChargeCapacity": 6500, "MaxCapacity": 100],
+                                          to: &battery, includeStatic: true, includeMedium: false, includeSlow: true)
+        XCTAssertEqual(try XCTUnwrap(battery.fullChargeCapacityRatio), 105, accuracy: 0.001)
+        XCTAssertNil(battery.qmaxCapacity)
+        XCTAssertNil(battery.healthPercentage)
+    }
+
     func testPackLayoutDecodesTemperatureCapacitiesAndLifetime() throws {
         let lifetime: [String: Any] = [
             "AverageTemperature": 218,
@@ -42,10 +80,10 @@ final class BatteryParsingTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(snapshot.temperature), 33.59, accuracy: 0.001)
         XCTAssertEqual(snapshot.designCapacity, 6249)
         XCTAssertEqual(snapshot.nominalCapacity, 6390)
-        XCTAssertEqual(snapshot.maximumCapacity, 6238)
-        XCTAssertEqual(snapshot.healthPercentage, 100)
-        XCTAssertEqual(batteryHealth(snapshot), "100.0")
-        XCTAssertEqual(snapshot.rawMaximumCapacity, 6238)
+
+        XCTAssertNil(snapshot.healthPercentage)
+        XCTAssertEqual(batteryHealth(snapshot), "—")
+        XCTAssertEqual(snapshot.fullChargeCapacity, 6238)
         XCTAssertEqual(snapshot.rawCurrentCapacity, 5961)
         XCTAssertEqual(snapshot.historicalMinTemperature, 15)
         XCTAssertEqual(snapshot.historicalMaxTemperature, 40)
@@ -79,30 +117,29 @@ final class BatteryParsingTests: XCTestCase {
 
         XCTAssertEqual(snapshot.designCapacity, 6249)
         XCTAssertEqual(snapshot.nominalCapacity, 5971)
-        XCTAssertEqual(snapshot.maximumCapacity, 5819)
-        XCTAssertEqual(snapshot.rawMaximumCapacity, 5819)
-        XCTAssertEqual(batteryHealth(snapshot), "93.1")
+
+        XCTAssertEqual(snapshot.fullChargeCapacity, 5819)
+        XCTAssertEqual(batteryHealth(snapshot), "—")
     }
 
     func testSystemHealthPercentageTakesPriorityOverCapacityRatio() {
         let battery = BatterySnapshot(
             designCapacity: 6249,
-            maximumCapacity: 5829,
-            healthPercentage: 100
+            healthPercentage: 100,
+            fullChargeCapacity: 5829
         )
 
-        XCTAssertEqual(batteryHealth(battery), "100.0")
+        XCTAssertEqual(batteryHealth(battery), "100")
     }
 
-    func testQmaxCanReportHealthAboveSystemCap() {
+    func testQmaxNeverOverridesSystemHealthBelowOneHundred() {
         let battery = BatterySnapshot(
             designCapacity: 6249,
-            maximumCapacity: 6300,
-            qmaxCapacity: 6300,
-            healthPercentage: 100
+            qmaxCapacity: 6587,
+            healthPercentage: 97
         )
 
-        XCTAssertEqual(batteryHealth(battery), "100.8")
+        XCTAssertEqual(batteryHealth(battery), "97")
     }
 
     func testLowestCellQmaxLimitsPackCapacity() {
@@ -118,13 +155,12 @@ final class BatteryParsingTests: XCTestCase {
     func testSlowPackRefreshPreservesQmaxWhenBankReadIsUnavailable() {
         var snapshot = BatterySnapshot(
             designCapacity: 6249,
-            maximumCapacity: 6587,
             qmaxCapacity: 6587,
-            healthPercentage: 100,
-            rawMaximumCapacity: 6095
+            healthPercentage: 97,
+            fullChargeCapacity: 6095
         )
         SystemReader.applyPackBatteryData(
-            ["AppleRawMaxCapacity": 6080, "NominalChargeCapacity": 6247],
+            ["MaxCapacity": 100, "AppleRawMaxCapacity": 6080, "NominalChargeCapacity": 6247],
             to: &snapshot,
             includeStatic: false,
             includeMedium: true,
@@ -132,9 +168,10 @@ final class BatteryParsingTests: XCTestCase {
         )
 
         XCTAssertNil(SystemReader.representativeQmax([]))
-        XCTAssertEqual(snapshot.maximumCapacity, 6587)
+
         XCTAssertEqual(snapshot.qmaxCapacity, 6587)
-        XCTAssertEqual(snapshot.rawMaximumCapacity, 6080)
+        XCTAssertEqual(snapshot.fullChargeCapacity, 6080)
+        XCTAssertEqual(snapshot.healthPercentage, 97)
     }
 
     func testBankLayoutIsStableByPackAndBankID() {
@@ -177,7 +214,7 @@ final class BatteryParsingTests: XCTestCase {
             ],
         ]
         var snapshot = BatterySnapshot(
-            rawMaximumCapacity: 6200,
+            fullChargeCapacity: 6200,
             rawCurrentCapacity: 5800,
             historicalMinTemperature: 15,
             historicalMaxTemperature: 40
@@ -192,7 +229,7 @@ final class BatteryParsingTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.rawCurrentCapacity, 5800)
-        XCTAssertEqual(snapshot.rawMaximumCapacity, 6200)
+        XCTAssertEqual(snapshot.fullChargeCapacity, 6200)
         XCTAssertEqual(snapshot.historicalMinTemperature, 15)
         XCTAssertEqual(snapshot.historicalMaxTemperature, 40)
     }

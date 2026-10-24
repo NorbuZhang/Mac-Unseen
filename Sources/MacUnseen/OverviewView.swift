@@ -28,6 +28,13 @@ struct OverviewView: View {
             Card(title: store.system.modelName, symbol: "laptopcomputer", tint: .blue) {
                 Text(store.system.chipName)
                     .font(.title3.weight(.semibold))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("macOS " + store.systemIdentity.osVersion)
+                    Text(tr("序列号") + ": " + (store.system.serialNumber ?? "—"))
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
                 Text(store.system.modelIdentifier)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
@@ -37,7 +44,7 @@ struct OverviewView: View {
                     Button(tr("查看实时性能")) { store.selectedSection = .performance }
                     Button(tr("查看进程")) { store.selectedSection = .processes }
                     Button(tr("查看系统信息")) { store.selectedSection = .systemInfo }
-                }.buttonStyle(.link).font(.callout)
+                }.buttonStyle(.link).tint(AppPalette.accentText).font(.callout)
             }
 
             if store.advancedSensorsActive {

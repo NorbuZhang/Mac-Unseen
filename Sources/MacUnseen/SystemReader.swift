@@ -13,6 +13,7 @@ enum SystemReader {
             snapshot.modelIdentifier = sysctlString("hw.model") ?? ""
             snapshot.modelName = modelDisplayName(for: snapshot.modelIdentifier)
             snapshot.chipName = sysctlString("machdep.cpu.brand_string") ?? ""
+            snapshot.serialNumber = platformSerialNumber()
             snapshot.processorCount = ProcessInfo.processInfo.processorCount
             snapshot.memoryTotal = Double(ProcessInfo.processInfo.physicalMemory)
         }
@@ -125,12 +126,8 @@ enum SystemReader {
             )
         }
         if includeStatic || includeSlow {
-            snapshot.healthPercentage = validated(
-                serviceNumberProperty("MaxCapacity", service: service)
-                    ?? batteryData.flatMap { number("MaxCapacity", in: $0) }
-                    ?? packData.flatMap { number("MaxCapacity", in: $0) },
-                range: 0...100
-            ) ?? snapshot.healthPercentage
+            // MaxCapacity may be the normalized charge scale (100), not battery
+            // health. The authoritative percentage comes from the power report.
             snapshot.nominalCapacity = batteryCapacityValue(
                 serviceNumberProperty("NominalChargeCapacity", service: service)
                     ?? batteryData.flatMap {
@@ -140,7 +137,7 @@ enum SystemReader {
                         number("NominalChargeCapacity", in: $0)
                     }
             )
-            snapshot.rawMaximumCapacity = batteryCapacityValue(
+            snapshot.fullChargeCapacity = batteryCapacityValue(
                 serviceNumberProperty("AppleRawMaxCapacity", service: service)
                     ?? batteryData.flatMap {
                         number("AppleRawMaxCapacity", in: $0)
@@ -151,9 +148,6 @@ enum SystemReader {
                             ?? number("FullChargeCapacity", in: $0)
                     }
             )
-            snapshot.maximumCapacity = snapshot.qmaxCapacity
-                ?? snapshot.rawMaximumCapacity
-                ?? snapshot.nominalCapacity
         }
         if includeMedium,
            let rawCurrentCapacity = batteryCapacityValue(
@@ -225,7 +219,6 @@ enum SystemReader {
             let banks = batteryBankRecords()
             if let qmax = representativeQmax(banks) {
                 snapshot.qmaxCapacity = qmax
-                snapshot.maximumCapacity = qmax
             }
             let measurements = decodedCellMeasurements(
                 legacyBatteryData: batteryData,
@@ -245,7 +238,16 @@ enum SystemReader {
             }
         }
 
+        if includeStatic || includeMedium || includeSlow
+            || previous.externalConnected != snapshot.externalConnected {
+            snapshot.magSafe = MagSafeReader.read(
+                preserving: previous.magSafe,
+                refreshMetadata: includeStatic || includeSlow
+            )
+        }
+
         let shouldRefreshAdapterDetails = includeSlow
+            || previous.magSafe?.connectionID != snapshot.magSafe?.connectionID
             || (!previous.externalConnected && snapshot.externalConnected)
             || previous.adapterName == nil
             || previous.adapterName == "外接电源"
@@ -484,22 +486,14 @@ enum SystemReader {
             snapshot.designCapacity = capacity
         }
         if includeStatic || includeSlow {
-            snapshot.healthPercentage = validated(
-                number("MaxCapacity", in: data),
-                range: 0...100
-            ) ?? snapshot.healthPercentage
             snapshot.nominalCapacity = batteryCapacityValue(
                 number("NominalChargeCapacity", in: data)
             )
-            snapshot.rawMaximumCapacity = batteryCapacityValue(
+            snapshot.fullChargeCapacity = batteryCapacityValue(
                 number("AppleRawMaxCapacity", in: data)
                     ?? number("FullChargeCapacity", in: data)
             )
-            // A missing bank read must not replace a learned Qmax with the
-            // different, load-dependent full-charge-capacity measurement.
-            snapshot.maximumCapacity = snapshot.qmaxCapacity
-                ?? snapshot.rawMaximumCapacity
-                ?? snapshot.nominalCapacity
+            // Qmax stays separate, even when a bank reading is unavailable.
         }
         if includeMedium,
            let capacity = batteryCapacityValue(
@@ -571,6 +565,16 @@ enum SystemReader {
             }
         }
         return (voltages, resistance)
+    }
+
+    private static func platformSerialNumber() -> String? {
+        guard let matching = IOServiceMatching("IOPlatformExpertDevice") else { return nil }
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
+        guard service != IO_OBJECT_NULL else { return nil }
+        defer { IOObjectRelease(service) }
+        let serial = (serviceProperty("IOPlatformSerialNumber", service: service) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return serial?.isEmpty == false ? serial : nil
     }
 
     static func representativeQmax(

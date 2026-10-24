@@ -1,19 +1,36 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+private final class AppContext: ObservableObject {
+    // Own the store without subscribing the whole Scene to every sensor sample.
+    let store = SensorStore()
+}
+
 @main
 struct MacUnseenApp: App {
-    @StateObject private var store = SensorStore()
+    @StateObject private var context = AppContext()
     @StateObject private var languageSettings = LanguageSettings()
+    private var store: SensorStore { context.store }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(store: store)
                 .environmentObject(store)
+                .environment(\.sensorActions, SensorActions(store: store))
                 .environmentObject(languageSettings)
                 .environment(\.locale, languageSettings.locale)
                 .id(languageSettings.language)
                 .frame(minWidth: 980, minHeight: 560)
+                .onAppear {
+                    DispatchQueue.main.async { updateWindowVisibility() }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { _ in
+                    updateWindowVisibility()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+                    updateWindowVisibility(excluding: notification.object as? NSWindow)
+                }
                 .onReceive(
                     NotificationCenter.default.publisher(
                         for: NSApplication.willTerminateNotification
@@ -26,6 +43,7 @@ struct MacUnseenApp: App {
                         for: NSApplication.didBecomeActiveNotification
                     )
                 ) { _ in
+                    updateWindowVisibility()
                     store.setAppActive(true)
                 }
                 .onReceive(
@@ -47,5 +65,11 @@ struct MacUnseenApp: App {
                 }
             }
         }
+    }
+
+    private func updateWindowVisibility(excluding closingWindow: NSWindow? = nil) {
+        store.setWindowVisible(NSApp.windows.contains {
+            $0 !== closingWindow && $0.canBecomeMain && $0.isVisible && !$0.isMiniaturized
+        })
     }
 }

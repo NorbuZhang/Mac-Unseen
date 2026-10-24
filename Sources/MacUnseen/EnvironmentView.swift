@@ -2,6 +2,7 @@ import SwiftUI
 
 struct EnvironmentView: View {
     @EnvironmentObject private var store: SensorStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var accordion = AccordionController()
     @State private var showingAccordion = false
 
@@ -102,7 +103,7 @@ struct EnvironmentView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .frame(height: 180)
-                .animation(.easeInOut(duration: 0.35), value: ambientIsWarm)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: ambientIsWarm)
 
                 Card(
                     title: "四路原始光谱通道",

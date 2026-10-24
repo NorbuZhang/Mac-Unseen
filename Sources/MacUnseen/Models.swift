@@ -14,6 +14,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Sendable {
     case battery
     case storage
     case network
+    case support
     case about
 
     var id: String { rawValue }
@@ -33,6 +34,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Sendable {
         case .battery: tr("电池与电源")
         case .storage: tr("存储")
         case .network: tr("网络")
+        case .support: tr("请我喝杯奶茶")
         case .about: tr("说明")
         }
     }
@@ -52,6 +54,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Sendable {
         case .battery: "battery.75percent"
         case .storage: "internaldrive"
         case .network: "network"
+        case .support: "cup.and.saucer"
         case .about: "info.circle"
         }
     }
@@ -63,9 +66,9 @@ struct DashboardGroup: Identifiable {
     var id: String { title }
     static let all: [DashboardGroup] = [
         .init(title: "性能与系统", sections: [.overview, .performance, .processes, .systemInfo]),
-        .init(title: "硬件状态", sections: [.battery, .temperature, .fans, .storage]),
-        .init(title: "连接与接口", sections: [.network, .ports]),
+        .init(title: "硬件与连接", sections: [.battery, .temperature, .fans, .storage, .network, .ports]),
         .init(title: "交互传感器", sections: [.motion, .environment, .trackpad]),
+        .init(title: "关于与支持", sections: [.about, .support]),
     ]
 }
 
@@ -166,6 +169,7 @@ struct SystemSnapshot: Equatable, Sendable {
     var modelName = "Mac"
     var modelIdentifier = ""
     var chipName = ""
+    var serialNumber: String?
     var memoryTotal = 0.0
     var memoryUsed = 0.0
     var diskTotal = 0.0
@@ -184,10 +188,9 @@ struct BatterySnapshot: Equatable {
     var amperage: Double?
     var designCapacity: Double?
     var nominalCapacity: Double?
-    var maximumCapacity: Double?
     var qmaxCapacity: Double?
     var healthPercentage: Double?
-    var rawMaximumCapacity: Double?
+    var fullChargeCapacity: Double?
     var rawCurrentCapacity: Double?
     var charging = false
     var externalConnected = false
@@ -199,12 +202,22 @@ struct BatterySnapshot: Equatable {
     var historicalMaxDischargeCurrent: Double?
     var adapterName: String?
     var adapterRatedWatts: Double?
+    var magSafe: MagSafeSnapshot?
     var negotiatedVoltage: Double?
     var negotiatedCurrent: Double?
     var liveInputPower: Double?
     var liveInputVoltage: Double?
     var liveInputCurrent: Double?
     var pdProfiles: [String] = []
+
+    /// Same pack-level mAh units; deliberately independent of Qmax and system health.
+    /// Values above 100% are meaningful relative to the manufacturer's design rating.
+    var fullChargeCapacityRatio: Double? {
+        guard let fullChargeCapacity, fullChargeCapacity.isFinite, fullChargeCapacity > 0,
+              let designCapacity, designCapacity.isFinite, designCapacity > 0 else { return nil }
+        let ratio = fullChargeCapacity / designCapacity * 100
+        return ratio.isFinite ? ratio : nil
+    }
 }
 
 struct DiskSnapshot: Identifiable, Equatable, Sendable {
@@ -216,6 +229,7 @@ struct DiskSnapshot: Identifiable, Equatable, Sendable {
     var firmware = ""
     var capacity = 0.0
     var solidState = false
+    var mediumType = ""
     var removable = false
     var smartCapable = false
     var trimEnabled: Bool?
@@ -230,6 +244,13 @@ struct DiskSnapshot: Identifiable, Equatable, Sendable {
 
     var isInternal: Bool {
         location.localizedCaseInsensitiveContains("internal")
+    }
+
+    var mediaKind: String {
+        let medium = mediumType.lowercased()
+        if solidState || medium.contains("solid") || medium.contains("non-rotational") || medium.contains("non-rotating") { return "SSD" }
+        if medium.contains("rotational") || medium.contains("rotating") || medium.contains("hard disk") { return "HDD" }
+        return "未知"
     }
 
     var healthText: String {

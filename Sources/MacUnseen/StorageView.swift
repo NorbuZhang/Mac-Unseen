@@ -26,7 +26,8 @@ struct StorageView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(store.advancedAccessPending)
                 .help(tr("需要管理员权限读取 NVMe SMART 寿命和终身读写计数"))
-            )
+            ),
+            reportSection: .storage
         ) {
             if store.storage.disks.isEmpty {
                 Card(
@@ -73,12 +74,15 @@ struct StorageView: View {
                 .foregroundStyle(.secondary)
             }
 
+            SystemReportCard(reports: store.systemReports, id: "SPStorageDataType", title: "卷与文件系统")
+            SystemReportCard(reports: store.systemReports, id: "SPNetworkVolumeDataType")
             HardwareUpdatedLabel(date: store.storage.updatedAt)
         }
     }
 }
 
 private struct DiskStatusCard: View {
+    @EnvironmentObject private var store: SensorStore
     let disk: DiskSnapshot
     let smart: StorageSMARTSnapshot
 
@@ -91,10 +95,18 @@ private struct DiskStatusCard: View {
                 ? nil
                 : (
                     AppLocalization.language == .english
-                        ? "System device name: \(disk.bsdName). The app never displays the drive serial number."
-                        : "系统设备名：\(disk.bsdName)。应用不会显示磁盘序列号。"
+                        ? "System device name: \(disk.bsdName)."
+                        : "系统设备名：\(disk.bsdName)。"
                 )
         ) {
+            SpecificationGrid(rows: [
+                ("容量", formatHardwareBytes(UInt64(exactly: disk.capacity))),
+                ("类型", tr(disk.mediaKind)),
+                ("连接类型", tr(disk.connection)), ("位置", SystemReportLabels.localizedValue(disk.location, label: "Location")),
+                ("固件版本", disk.firmware.isEmpty ? "—" : disk.firmware),
+                ("TRIM 支持", disk.trimEnabled.map { tr($0 ? "是" : "否") } ?? "—"),
+            ], columns: 6)
+            SoftDivider()
             HStack(spacing: 5) {
                 Text(tr("终身 SMART 统计"))
                     .font(.headline)
@@ -202,6 +214,14 @@ private struct DiskStatusCard: View {
                 ],
                 tint: disk.readErrors + disk.writeErrors == 0 ? .teal : .orange
             )
+            SoftDivider()
+            ForEach(["SPNVMeDataType", "SPSerialATADataType"], id: \.self) { id in
+                InlineSystemReport(reports: store.systemReports, id: id,
+                    selection: .device(field: "BSD Name", value: disk.bsdName),
+                    excludingDirect: Set(["Model", "BSD Name"] + (disk.capacity > 0 ? ["Capacity"] : [])
+                                   + (!disk.firmware.isEmpty ? ["Revision"] : [])
+                                   + (disk.trimEnabled != nil ? ["TRIM Support"] : [])))
+            }
         }
     }
 }

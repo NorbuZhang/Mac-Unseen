@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 @preconcurrency import CoreLocation
 import Foundation
 import TrackpadBridge
@@ -9,8 +10,13 @@ final class SensorStore:
     ObservableObject,
     @preconcurrency CLLocationManagerDelegate
 {
+    let navigation = DashboardNavigation()
     @Published var selectedSection: DashboardSection? = .overview {
         didSet {
+            if oldValue != selectedSection {
+                navigation.selectedSection = selectedSection
+                if oldValue == .processes { processSnapshot = ProcessSnapshot() }
+            }
             // A disappearing ScrollView may never deliver its final idle phase.
             // Do not let that stale state suspend refreshes on the next page.
             pageIsScrolling = false
@@ -33,12 +39,22 @@ final class SensorStore:
             if appIsActive {
                 refreshSelectedSection(force: true)
             }
+            startRefreshing()
         }
     }
     @Published var performance = PerformanceReading()
     @Published var processSnapshot = ProcessSnapshot()
     @Published var cpuHistory: [Double] = []
+    @Published var memoryPressureHistory = MemoryPressureHistory()
     @Published var systemIdentity = SystemIdentity()
+    @Published private(set) var systemRuntime = SystemRuntime()
+    let systemReports = SystemReportStore()
+    private var reportSubscription: AnyCancellable?
+    @Published private(set) var systemDetails = SystemDetails()
+    @Published private(set) var systemDetailsLoading = false
+    @Published private(set) var displays: [DisplayDetails] = []
+    private var systemDetailsTask: Task<Void, Never>?
+    private var systemDetailsJob: SystemCommand?
     @Published private(set) var monitoringActive = false
     private var monitoringTask: Task<Void, Never>?
     @Published var system = SystemSnapshot()
@@ -48,7 +64,9 @@ final class SensorStore:
     @Published var advanced = AdvancedSnapshot()
     @Published var trackpadTouches: [TrackpadTouch] = []
     @Published var trackpadDetails = TrackpadDetails()
-    @Published var trackpadAvailable = false
+    @Published var trackpadAvailable = false {
+        didSet { if oldValue != trackpadAvailable { startRefreshing() } }
+    }
     @Published var trackpadPressureHistory: [Double] = []
     @Published private(set) var expandedTemperatureGroups = Set<String>()
     @Published var vibrationHistory: [Double] = []
@@ -57,11 +75,26 @@ final class SensorStore:
             writeAdvancedConfiguration()
         }
     }
-    @Published var isAuthorizing = false
-    @Published private(set) var isConnectingAdvancedSensors = false
+    @Published var isAuthorizing = false {
+        didSet { if oldValue != isAuthorizing { startRefreshing() } }
+    }
+    @Published private(set) var isConnectingAdvancedSensors = false {
+        didSet { if oldValue != isConnectingAdvancedSensors { startRefreshing() } }
+    }
     @Published var authorizationMessage: String?
-    @Published var isMagicAnglePresented = false
-    @Published private(set) var advancedSensorsActive = false
+    @Published var isMagicAnglePresented = false {
+        didSet {
+            if oldValue != isMagicAnglePresented { navigation.isMagicAnglePresented = isMagicAnglePresented }
+        }
+    }
+    @Published private(set) var advancedSensorsActive = false {
+        didSet {
+            if oldValue != advancedSensorsActive {
+                navigation.advancedSensorsActive = advancedSensorsActive
+                startRefreshing()
+            }
+        }
+    }
     let launchMottoIndex = ComputerMottos.randomIndex()
 
     var launchMotto: String {
@@ -90,10 +123,14 @@ final class SensorStore:
     }
 
     private var refreshTask: Task<Void, Never>?
+    private var stopped = false
     private var hardwareStatusTask: Task<Void, Never>?
+    private var hardwareStatusJob: SystemCommand?
     private var magicAngleCandidateStartedAt: Date?
     private var magicAngleArmed = true
-    private var appIsActive = true
+    private var applicationIsActive = true
+    private var windowIsVisible = true
+    private var appIsActive: Bool { applicationIsActive && windowIsVisible }
     private let locationManager = CLLocationManager()
     private var pageIsScrolling = false
     private var temperatureDiscoveryStartedAt: Date?
@@ -107,6 +144,10 @@ final class SensorStore:
     private var lastBatteryRefresh = Date.distantPast
     private var lastBatteryMediumRefresh = Date.distantPast
     private var lastBatterySlowRefresh = Date.distantPast
+    private var magSafeFirmwareTask: Task<Void, Never>?
+    private var magSafeFirmwareJob: MagSafeFirmwareJob?
+    private var magSafeFirmwareRequest: MagSafeFirmwareRequest?
+    private var lastMagSafeFirmwareAttempt = Date.distantPast
     private var lastAdvancedStatusRefresh = Date.distantPast
     private var storageMetadataLoaded = false
     private var lastNetworkPortRefresh = Date.distantPast
@@ -143,6 +184,11 @@ final class SensorStore:
         lastSystemRefresh = Date()
         lastDiskUsageRefresh = Date()
         battery = SystemReader.readBattery()
+        reportSubscription = systemReports.$reports.sink { [weak self] reports in
+            guard let self else { return }
+            let health = reports["SPPowerDataType"]?.batteryHealthPercentage
+            if self.battery.healthPercentage != health { self.battery.healthPercentage = health }
+        }
         lastBatteryMediumRefresh = Date()
         lastBatterySlowRefresh = Date()
         readAdvancedSnapshot(publishData: true)
@@ -247,22 +293,30 @@ final class SensorStore:
     }
 
     func setAppActive(_ active: Bool) {
-        guard appIsActive != active else {
-            return
-        }
-        appIsActive = active
+        guard applicationIsActive != active else { return }
+        applicationIsActive = active
+        updateActivity()
+    }
+
+    func setWindowVisible(_ visible: Bool) {
+        guard windowIsVisible != visible else { return }
+        windowIsVisible = visible
+        updateActivity()
+    }
+
+    private func updateActivity() {
         restartMonitoring()
         advancedSnapshotStaleSince = nil
         writeAdvancedConfiguration()
-        if active {
+        if appIsActive {
             configureTrackpadForSelectedSection()
             restartHardwareStatusRefreshing()
             refreshSelectedSection(force: true)
         } else {
-            hardwareStatusTask?.cancel()
-            hardwareStatusTask = nil
+            cancelHardwareStatus()
             stopTrackpad()
         }
+        startRefreshing()
     }
 
     func setTemperatureGroup(_ id: String, expanded: Bool) {
@@ -310,12 +364,15 @@ final class SensorStore:
     }
 
     func stop() {
+        stopped = true
+        cancelMagSafeFirmware()
+        systemReports.setActive(false)
+        cancelSystemDetails()
         monitoringTask?.cancel()
         monitoringTask = nil
         refreshTask?.cancel()
         refreshTask = nil
-        hardwareStatusTask?.cancel()
-        hardwareStatusTask = nil
+        cancelHardwareStatus()
         stopTrackpad()
         stopAdvancedSensors()
     }
@@ -350,23 +407,117 @@ final class SensorStore:
         system = SystemReader.readSystem()
         lastSystemRefresh = Date()
         lastDiskUsageRefresh = Date()
+        if selectedSection == .battery {
+            battery = SystemReader.readBattery(preserving: battery)
+            refreshMagSafeFirmware(force: true)
+            let refreshedAt = Date()
+            lastBatteryRefresh = refreshedAt
+            lastBatteryMediumRefresh = refreshedAt
+            lastBatterySlowRefresh = refreshedAt
+        }
+        if selectedSection == .systemInfo { loadSystemDetails(force: true) }
+        systemReports.refreshRequested()
+    }
+
+    func refreshDisplays() {
+        guard selectedSection == .performance, appIsActive else { return }
+        displays = DisplayDetailsReader.read()
+    }
+
+    private func cancelMagSafeFirmware() {
+        // An interrupted attempt can be retried when the page becomes active.
+        if magSafeFirmwareJob != nil { lastMagSafeFirmwareAttempt = .distantPast }
+        magSafeFirmwareJob?.cancel()
+        magSafeFirmwareJob = nil
+        magSafeFirmwareTask?.cancel()
+        magSafeFirmwareTask = nil
+    }
+
+    private func refreshMagSafeFirmware(force: Bool = false) {
+        guard appIsActive, selectedSection == .battery,
+              let request = battery.magSafe?.firmwareRequest else {
+            cancelMagSafeFirmware()
+            magSafeFirmwareRequest = nil
+            return
+        }
+        if force || request != magSafeFirmwareRequest {
+            cancelMagSafeFirmware()
+            magSafeFirmwareRequest = request
+            lastMagSafeFirmwareAttempt = .distantPast
+        }
+        guard magSafeFirmwareJob == nil,
+              Date().timeIntervalSince(lastMagSafeFirmwareAttempt) >= batterySlowRefreshInterval else { return }
+        lastMagSafeFirmwareAttempt = Date()
+        let job = MagSafeFirmwareJob()
+        magSafeFirmwareJob = job
+        magSafeFirmwareTask = Task { [weak self] in
+            let firmware = await Task.detached(priority: .utility) { job.run(for: request) }.value
+            guard let self, !Task.isCancelled, self.magSafeFirmwareJob === job else { return }
+            self.magSafeFirmwareJob = nil
+            self.magSafeFirmwareTask = nil
+            guard self.appIsActive, self.selectedSection == .battery,
+                  self.battery.magSafe?.firmwareRequest == request else { return }
+            // Recheck the physical connection after the diagnostic, so a cable
+            // swapped while it ran cannot receive the old cable's version.
+            var current = MagSafeReader.read(preserving: nil, refreshMetadata: true)
+            if current?.firmwareRequest == request { current?.cableFirmware = firmware }
+            self.battery.magSafe = current
+        }
+    }
+
+    private func cancelSystemDetails() {
+        systemDetailsJob?.cancel()
+        systemDetailsJob = nil
+        systemDetailsTask?.cancel()
+        systemDetailsTask = nil
+        if systemDetailsLoading { systemDetailsLoading = false }
+    }
+
+    private func loadSystemDetails(force: Bool = false) {
+        guard !systemDetailsLoading, force || systemDetails.sampledAt == nil else { return }
+        systemDetailsLoading = true
+        let job = SystemCommand()
+        systemDetailsJob = job
+        systemDetailsTask = Task { [weak self] in
+            let details = await Task.detached(priority: .utility) { SystemDetailsReader.read(using: job) }.value
+            guard let self, !Task.isCancelled, self.systemDetailsJob === job else { return }
+            self.systemDetails = details
+            self.systemDetailsLoading = false
+            self.systemDetailsTask = nil
+            self.systemDetailsJob = nil
+            if let name = details.modelName { self.system.modelName = name }
+        }
     }
 
     private func restartMonitoring() {
+        if !appIsActive || selectedSection != .battery { cancelMagSafeFirmware() }
+        if !appIsActive || selectedSection != .systemInfo { cancelSystemDetails() }
         monitoringTask?.cancel()
         monitoringTask = nil
         monitoringActive = false
+        memoryPressureHistory.pause()
         let section = selectedSection ?? .overview
+        systemReports.show(section: section, active: appIsActive)
+        if section == .battery, appIsActive { systemReports.request("SPPowerDataType", persistent: true) }
+        if section == .systemInfo, appIsActive { loadSystemDetails() }
         guard let interval = MonitoringRefreshPolicy.interval(for: section, active: appIsActive) else { return }
         monitoringActive = true
-        cpuHistory = []
-        if section == .processes { processSnapshot = ProcessSnapshot() }
-        else { performance = PerformanceReading() }
+        if section == .processes {
+            processSnapshot = ProcessSnapshot()
+        } else if section != .systemInfo {
+            cpuHistory = []
+            performance = PerformanceReading()
+        }
         // New instance intentionally discards every cumulative-counter baseline.
         let reader = PerformanceReader()
         monitoringTask = Task { [weak self] in
             while !Task.isCancelled {
-                if section == .processes {
+                if section == .systemInfo {
+                    let value = await reader.sampleSystemRuntime()
+                    guard let self, !Task.isCancelled, self.appIsActive,
+                          self.selectedSection == section else { return }
+                    self.systemRuntime = value
+                } else if section == .processes {
                     let value = await reader.sampleProcesses()
                     guard let self, !Task.isCancelled, self.appIsActive,
                           self.selectedSection == section else { return }
@@ -376,6 +527,9 @@ final class SensorStore:
                     guard let self, !Task.isCancelled, self.appIsActive,
                           self.selectedSection == section else { return }
                     self.performance = value
+                    if let date = value.sampledAt {
+                        self.memoryPressureHistory.append(rawLevel: value.memory.pressure, at: date)
+                    }
                     if let cpu = value.cpu {
                         self.cpuHistory.append(cpu)
                         if self.cpuHistory.count > 60 { self.cpuHistory.removeFirst(self.cpuHistory.count - 60) }
@@ -387,26 +541,39 @@ final class SensorStore:
     }
 
     private func startRefreshing() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        guard !stopped,
+              let interval = MonitoringRefreshPolicy.sensorInterval(
+                for: selectedSection ?? .overview, active: appIsActive,
+                advancedActive: advancedSensorsActive, advancedPending: advancedAccessPending,
+                trackpadAvailable: trackpadAvailable
+              ) else { return }
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self else {
-                    return
-                }
+                // Page and activity changes already perform an immediate read.
+                // Sleep first so status transitions can safely reschedule this loop.
+                do { try await Task.sleep(for: .seconds(interval)) }
+                catch { return }
+                guard let self, !Task.isCancelled else { return }
                 if appIsActive {
                     refreshSelectedSection()
                 } else if Date().timeIntervalSince(lastAdvancedStatusRefresh) >= 2 {
                     readAdvancedSnapshot(publishData: false)
                 }
-                try? await Task.sleep(
-                    for: refreshInterval
-                )
             }
         }
     }
 
-    private func restartHardwareStatusRefreshing() {
+    private func cancelHardwareStatus() {
+        hardwareStatusJob?.cancel()
+        hardwareStatusJob = nil
         hardwareStatusTask?.cancel()
         hardwareStatusTask = nil
+    }
+
+    private func restartHardwareStatusRefreshing() {
+        cancelHardwareStatus()
         guard appIsActive,
               selectedSection == .storage || selectedSection == .network || selectedSection == .ports else {
             return
@@ -416,14 +583,17 @@ final class SensorStore:
         hardwareStatusTask = Task { [weak self] in
             var shouldIncludeStorageMetadata = includeStorageMetadata
             while !Task.isCancelled {
+                guard let self else { return }
+                let job = SystemCommand()
+                self.hardwareStatusJob = job
                 if section == .storage {
                     let includeMetadata = shouldIncludeStorageMetadata
                     let value = await Task.detached(priority: .utility) {
                         HardwareStatusReader.readStorage(
-                            includeDeviceMetadata: includeMetadata
+                            includeDeviceMetadata: includeMetadata, command: job
                         )
                     }.value
-                    guard let self, !Task.isCancelled,
+                    guard !Task.isCancelled, self.hardwareStatusJob === job,
                           self.selectedSection == .storage else {
                         return
                     }
@@ -434,19 +604,16 @@ final class SensorStore:
                     storageMetadataLoaded = true
                     shouldIncludeStorageMetadata = false
                 } else {
-                    guard let self else {
-                        return
-                    }
                     let includePorts = section == .ports && (forceNetworkPortRefresh
                         || Date().timeIntervalSince(lastNetworkPortRefresh) >= 30)
                     let previous = network
                     let value = await Task.detached(priority: .utility) {
                         HardwareStatusReader.readNetwork(
                             preserving: previous,
-                            includePorts: includePorts
+                            includePorts: includePorts, command: job
                         )
                     }.value
-                    guard !Task.isCancelled,
+                    guard !Task.isCancelled, self.hardwareStatusJob === job,
                           selectedSection == section else {
                         return
                     }
@@ -459,6 +626,7 @@ final class SensorStore:
                 guard !Task.isCancelled else {
                     return
                 }
+                self.hardwareStatusJob = nil
                 try? await Task.sleep(
                     for: .seconds(section == .network ? 5 : section == .ports ? 30 : 60)
                 )
@@ -466,28 +634,10 @@ final class SensorStore:
         }
     }
 
-    private var refreshInterval: Duration {
-        guard appIsActive else {
-            return .seconds(1)
-        }
-        switch selectedSection ?? .overview {
-        case .motion, .environment, .trackpad:
-            return .milliseconds(100)
-        case .temperature, .fans:
-            return .seconds(1)
-        case .battery:
-            return .milliseconds(500)
-        case .storage:
-            return .seconds(2)
-        default:
-            return .seconds(1)
-        }
-    }
-
     private func refreshSelectedSection(force: Bool = false) {
         let section = selectedSection ?? .overview
         let now = Date()
-        if pageIsScrolling, section != .battery {
+        if pageIsScrolling && section != .battery {
             if now.timeIntervalSince(lastAdvancedStatusRefresh) >= 2 {
                 readAdvancedSnapshot(publishData: false)
             }
@@ -495,7 +645,7 @@ final class SensorStore:
         }
         var readAdvanced = false
         switch section {
-        case .overview, .performance, .systemInfo:
+        case .overview, .performance:
             if force || now.timeIntervalSince(lastSystemRefresh) >= MonitoringRefreshPolicy.systemSummary {
                 let includeDiskUsage = now.timeIntervalSince(
                     lastDiskUsageRefresh
@@ -531,6 +681,10 @@ final class SensorStore:
             readAdvancedSnapshot(publishData: true)
             readAdvanced = true
         case .battery:
+            if let report = systemReports.reports["SPPowerDataType"],
+               now.timeIntervalSince(report.sampledAt) >= batterySlowRefreshInterval {
+                systemReports.refresh("SPPowerDataType")
+            }
             if force
                 || now.timeIntervalSince(lastBatteryRefresh)
                     >= batteryLiveRefreshInterval {
@@ -554,9 +708,10 @@ final class SensorStore:
                     lastBatterySlowRefresh = now
                 }
             }
+            refreshMagSafeFirmware()
             readAdvancedSnapshot(publishData: true)
             readAdvanced = true
-        case .network, .ports, .processes, .about:
+        case .network, .ports, .processes, .systemInfo, .about, .support:
             break
         }
         if !readAdvanced,
@@ -648,7 +803,7 @@ final class SensorStore:
             updated.telemetry["Fans"] = snapshot.telemetry["Fans"]
         case .storage:
             updated.storageSMART = snapshot.storageSMART
-        case .trackpad, .network, .ports, .performance, .processes, .systemInfo, .about:
+        case .trackpad, .network, .ports, .performance, .processes, .systemInfo, .about, .support:
             break
         }
         if updated != advanced {
@@ -662,8 +817,8 @@ final class SensorStore:
     ) {
         guard let timestamp, status == "running" else {
             if status == "stopped" || status == "error" {
-                advancedSensorsActive = false
-                isConnectingAdvancedSensors = false
+                if advancedSensorsActive { advancedSensorsActive = false }
+                if isConnectingAdvancedSensors { isConnectingAdvancedSensors = false }
                 advancedConnectionStartedAt = nil
                 advancedSnapshotStaleSince = nil
             }
@@ -672,10 +827,10 @@ final class SensorStore:
         }
         let timeout = appIsActive ? 6.0 : 20.0
         if Date().timeIntervalSince(timestamp) < timeout {
-            advancedSensorsActive = true
-            isConnectingAdvancedSensors = false
+            if !advancedSensorsActive { advancedSensorsActive = true }
+            if isConnectingAdvancedSensors { isConnectingAdvancedSensors = false }
             advancedConnectionStartedAt = nil
-            authorizationMessage = nil
+            if authorizationMessage != nil { authorizationMessage = nil }
             advancedSnapshotStaleSince = nil
             return
         }

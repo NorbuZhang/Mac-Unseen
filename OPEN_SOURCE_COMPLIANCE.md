@@ -6,6 +6,21 @@ This is an engineering license audit, not legal advice. Commercial release
 should be reviewed by qualified counsel, especially if the product will be
 sold through a store or under restrictive end-user terms.
 
+## 0.2.0 release preparation — 2026-10-24
+
+The release preparation now includes `Mac-Unseen-0.2.0-build-inputs.tar.xz`.
+It supplies the iSMC v0.16.5 source matching commit
+`9b21ebd2d2a5e8e396e64e7142570c955638a600`, its local gosmc source,
+and vendored Go dependencies matching the bundled binary's build metadata.
+The upstream source files were compared byte-for-byte and an offline Go build
+with `-mod=vendor` passed. The archive also contains smartmontools 7.5 source,
+packaging binaries, and the license inputs used by the app build script.
+
+Publish that archive alongside both app ZIPs. It addresses the missing iSMC
+dependency-source material identified in the historical audit below; the archive
+has only been prepared locally until the release is published. This records
+engineering checks, not a new legal conclusion. No third-party licenses change.
+
 ## Executive conclusion
 
 Commercial use and charging money are allowed by every identified
@@ -20,13 +35,31 @@ open-source license. They are not all permissive licenses:
   command-line arguments, files, and JSON output. This supports treating the
   distribution as an aggregate of separate programs, but that classification
   is fact-sensitive and is not a legal guarantee.
-- The current direct-download package should not be represented as fully
-  commercial-release-ready until a complete iSMC corresponding-source
+- The current direct-download package should not be distributed as a binary
+  release until a complete iSMC corresponding-source
   package, including the runtime Go modules used to build its binary, is
   distributed from the same release location or reviewed and accepted by
   counsel.
 
 ## Components
+
+### bruiselea/MAcordion (accordion addition, 2026-09-28)
+
+- Source revision: `f572aa26161de29d4b6dfc02071d9e4408725918`
+- License: MAcordion Custom License, retained verbatim in
+  `Resources/Licenses/MAcordion.txt`
+- Use: adapted two-detuned-reed synthesis approach and musical keyboard map;
+  the DSP callback and lid-motion integration were rewritten for Mac Unseen.
+- The upstream text permits use, modification, distribution and sale, provided
+  clear, visible credit to the original creator is included.
+- Credit and the project link appear in the accordion settings and About page.
+  `Attributions.txt` records the source, revision and bundled license location.
+- No change to Mac Unseen's root MPL-2.0 license is required by this upstream
+  condition. Preserve the MAcordion notice for its adapted material alongside
+  the app's license; do not relabel the upstream license as MPL-2.0 or MIT.
+- The hinge-use caution in settings is product guidance, not a change to either
+  license. This addition does not resolve the existing GPL release conditions
+  for other bundled tools listed below.
 
 ### olvvier/apple-silicon-accelerometer
 
@@ -122,7 +155,7 @@ separate from open-source licensing:
 1. Distribute `Attributions.txt` and all files under `Resources/Licenses`.
 2. Keep the GPL source archives available with every binary release.
 3. Add the complete iSMC runtime dependency source archive to the same release
-   location before commercial distribution.
+   location before binary distribution.
 4. Do not impose EULA terms that prohibit recipients from exercising GPL
    rights over iSMC, FanSpeedProbe or smartctl.
 5. Record the exact binary hashes, source revisions, compiler/build method and

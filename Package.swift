@@ -1,6 +1,4 @@
 // swift-tools-version: 6.2
-// SPDX-License-Identifier: MPL-2.0
-
 
 import PackageDescription
 
@@ -13,6 +11,8 @@ let package = Package(
         .executable(name: "MacUnseen", targets: ["MacUnseen"])
     ],
     targets: [
+        .target(name: "SystemMonitorBridge", publicHeadersPath: "include"),
+        .target(name: "AccordionDSP", publicHeadersPath: "include"),
         .target(
             name: "TrackpadBridge",
             publicHeadersPath: "include",
@@ -22,13 +22,18 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacUnseen",
-            dependencies: ["TrackpadBridge"],
+            dependencies: ["TrackpadBridge", "AccordionDSP", "SystemMonitorBridge"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreLocation"),
                 .linkedFramework("CoreWLAN"),
-                .linkedFramework("IOKit")
+                .linkedFramework("IOKit"),
+                .linkedFramework("Metal")
             ]
+        ),
+        .testTarget(
+            name: "MacUnseenTests",
+            dependencies: ["MacUnseen", "AccordionDSP", "SystemMonitorBridge"]
         )
     ]
 )

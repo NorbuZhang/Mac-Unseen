@@ -1,65 +1,83 @@
 import SwiftUI
 
+struct SensorActions: Sendable {
+    var setPageScrolling: @MainActor @Sendable (Bool) -> Void = { _ in }
+    var refreshSystemInformation: @MainActor @Sendable () -> Void = {}
+
+    init() {}
+    @MainActor init(store: SensorStore) {
+        setPageScrolling = { [weak store] in store?.setPageScrolling($0) }
+        refreshSystemInformation = { [weak store] in store?.refreshSystemInformation() }
+    }
+}
+
+private struct SensorActionsKey: EnvironmentKey {
+    static let defaultValue = SensorActions()
+}
+
+extension EnvironmentValues {
+    var sensorActions: SensorActions {
+        get { self[SensorActionsKey.self] }
+        set { self[SensorActionsKey.self] = newValue }
+    }
+}
+
 struct Page<Content: View>: View {
-    @EnvironmentObject private var store: SensorStore
+    @Environment(\.sensorActions) private var actions
     let title: String
     let subtitle: String
     let headerAccessory: AnyView?
+    let showsHeader: Bool
+    let reportSection: DashboardSection?
     let content: Content
 
     init(
         title: String,
         subtitle: String,
         headerAccessory: AnyView? = nil,
+        showsHeader: Bool = true,
+        reportSection: DashboardSection? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
         self.headerAccessory = headerAccessory
+        self.showsHeader = showsHeader
+        self.reportSection = reportSection
         self.content = content()
     }
 
     var body: some View {
         ZStack {
             DashboardBackground()
-
             GeometryReader { viewport in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack(alignment: .center, spacing: 14) {
-                                Text(tr(title))
-                                    .font(
-                                        .system(
-                                            size: 31,
-                                            weight: .bold,
-                                            design: .rounded
-                                        )
-                                    )
-                                    .tracking(-0.45)
-                                if let headerAccessory {
-                                    headerAccessory
-                                }
-                            }
-                            Text(tr(subtitle))
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.bottom, 2)
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        if showsHeader { header.padding(.bottom, 2) }
                         content
                     }
-                    .frame(
-                        width: max(viewport.size.width - 60, 0),
-                        alignment: .leading
-                    )
-                    .padding(.horizontal, 30)
-                    .padding(.top, 27)
-                    .padding(.bottom, 36)
+                    .frame(width: max(viewport.size.width - 60, 0), alignment: .leading)
+                    .padding(.horizontal, 30).padding(.top, 27).padding(.bottom, 36)
                 }
-                .onScrollPhaseChange { _, phase in
-                    store.setPageScrolling(phase != .idle)
+                .onScrollPhaseChange { _, phase in actions.setPageScrolling(phase != .idle) }
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 14) {
+                Text(tr(title))
+                    .font(.system(size: 31, weight: .bold, design: .rounded))
+                    .tracking(-0.45)
+                if let headerAccessory { headerAccessory }
+                Spacer(minLength: 8)
+                if reportSection != nil {
+                    Button(tr("更新资料"), systemImage: "arrow.clockwise") { actions.refreshSystemInformation() }
+                        .buttonStyle(.bordered).tint(AppPalette.accentText)
                 }
             }
+            Text(tr(subtitle)).font(.callout).foregroundStyle(.secondary)
         }
     }
 }
@@ -87,9 +105,18 @@ struct CardSurface: View {
     let cornerRadius: CGFloat
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.detailStyle) private var detailStyle
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        if detailStyle == .accent {
+        if reduceTransparency || contrast == .increased {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(Color.primary.opacity(contrast == .increased ? 0.5 : 0.12), lineWidth: 1)
+                }
+        } else if detailStyle == .accent {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(
                     colorScheme == .light
@@ -149,9 +176,18 @@ struct CardSurface: View {
 struct TileSurface: View {
     let tint: Color
     @Environment(\.detailStyle) private var detailStyle
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        if detailStyle == .accent {
+        if reduceTransparency || contrast == .increased {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(Color.primary.opacity(contrast == .increased ? 0.5 : 0.16), lineWidth: 1)
+                }
+        } else if detailStyle == .accent {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .fill(
                     LinearGradient(
@@ -279,7 +315,7 @@ struct Card<Content: View>: View {
                             .font(.headline)
                             .foregroundStyle(.primary)
                         if let info {
-                            InfoButton(text: info, actionTitle: infoActionTitle, action: infoAction)
+                            InfoButton(text: info, context: title, actionTitle: infoActionTitle, action: infoAction)
                         }
                     }
                     if detailStyle == .accent {
@@ -297,6 +333,7 @@ struct Card<Content: View>: View {
 
 struct InfoButton: View {
     let text: String
+    var context: String? = nil
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
     @State private var isPresented = false
@@ -309,13 +346,15 @@ struct InfoButton: View {
                 Color.clear
                 Image(systemName: "info.circle")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
             .frame(width: 34, height: 34)
             .contentShape(Rectangle())
             .padding(-10)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(context.map { tr($0) + ", " + tr("查看说明") } ?? tr("查看说明"))
+        .accessibilityHint(tr(text))
         .help(tr(text))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 14) {
@@ -360,7 +399,7 @@ struct MetricTile: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 if let info {
-                    InfoButton(text: info)
+                    InfoButton(text: info, context: name)
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {

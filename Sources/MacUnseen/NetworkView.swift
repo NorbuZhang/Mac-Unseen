@@ -10,7 +10,8 @@ struct NetworkView: View {
     var body: some View {
         Page(
             title: "网络",
-            subtitle: "当前 IP、Wi-Fi 协议和累计网络流量"
+            subtitle: "当前 IP、Wi-Fi 协议和累计网络流量",
+            reportSection: .network
         ) {
             Card(
                 title: "网络状态",
@@ -28,16 +29,6 @@ struct NetworkView: View {
                             name: "活动接口",
                             value: primaryInterface?.name ?? "-",
                             detail: primaryInterface?.displayName
-                        ),
-                        Metric(
-                            name: "当前 IPv4",
-                            value: primaryInterface?.ipv4.first ?? "-",
-                            info: "这是 Mac 当前网络接口的本机 IPv4 地址，不一定是路由器之外可见的公网 IP。"
-                        ),
-                        Metric(
-                            name: "当前 IPv6",
-                            value: primaryInterface?.ipv6.first ?? "-",
-                            info: "显示首个非链路本地 IPv6 地址。仅以 fe80 开头的本地链路地址不会在这里显示。"
                         ),
                         Metric(
                             name: "VPN 隧道",
@@ -108,6 +99,13 @@ struct NetworkView: View {
                     ],
                     tint: .blue
                 )
+                InlineSystemReport(reports: store.systemReports, id: "SPAirPortDataType",
+                    selection: .branch("Interfaces"), scopedExcluding: ["Current Network Information": Set(
+                        (!store.network.wifi.protocolName.isEmpty ? ["PHY Mode"] : [])
+                        + (!store.network.wifi.channel.isEmpty ? ["Channel"] : [])
+                        + (!store.network.wifi.transmitRate.isEmpty ? ["Transmit Rate"] : [])
+                        + (!store.network.wifi.signalNoise.isEmpty ? ["Signal / Noise"] : [])
+                        + (!store.network.wifi.security.isEmpty ? ["Security"] : []))], compact: true)
             }
 
             if !store.network.interfaces.isEmpty {
@@ -126,12 +124,18 @@ struct NetworkView: View {
                 }
             }
 
+            SystemReportCard(reports: store.systemReports, id: "SPNetworkDataType", title: "其他网络服务", expanded: false,
+                             selection: .omittingDevices(field: "BSD Device Name", values: Set(store.network.interfaces.map(\.name))))
+            ForEach(["SPEthernetDataType", "SPNetworkLocationDataType", "SPFirewallDataType"], id: \.self) { id in
+                SystemReportCard(reports: store.systemReports, id: id)
+            }
             HardwareUpdatedLabel(date: store.network.updatedAt)
         }
     }
 }
 
 private struct NetworkInterfaceRow: View {
+    @EnvironmentObject private var store: SensorStore
     let interface: NetworkInterfaceSnapshot
 
     var body: some View {
@@ -145,7 +149,7 @@ private struct NetworkInterfaceRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(interface.ipv4.first ?? interface.ipv6.first ?? "-")
+                Text((interface.ipv4 + interface.ipv6).joined(separator: " · "))
                     .font(.callout.monospaced())
                     .textSelection(.enabled)
             }
@@ -162,6 +166,12 @@ private struct NetworkInterfaceRow: View {
                 ],
                 tint: .teal
             )
+            InlineSystemReport(reports: store.systemReports, id: "SPNetworkDataType",
+                selection: .device(field: "BSD Device Name", value: interface.name),
+                excluding: Set(["BSD Device Name"] + (!interface.ipv4.isEmpty ? ["IPv4 Addresses"] : [])
+                               + (!interface.ipv6.isEmpty ? ["IPv6 Addresses"] : [])),
+                scopedExcluding: ["IPv4": !interface.ipv4.isEmpty ? ["Addresses"] : [],
+                                  "IPv6": !interface.ipv6.isEmpty ? ["Addresses"] : []], compact: true)
         }
         .padding(.vertical, 3)
     }
@@ -198,7 +208,7 @@ private struct ConnectionStatusRow: View {
 struct PortsView: View {
     @EnvironmentObject private var store: SensorStore
     var body: some View {
-        Page(title: "端口与外设", subtitle: "USB-C、雷雳连接状态与外接设备") {
+        Page(title: "端口与外设", subtitle: "USB-C、雷雳连接状态与外接设备", reportSection: .ports) {
             Card(
                 title: "USB-C 与雷雳接口",
                 symbol: "cable.connector",
@@ -225,6 +235,7 @@ struct PortsView: View {
                         }
                     }
                 }
+                InlineSystemReport(reports: store.systemReports, id: "SPThunderboltDataType", omitting: ["Port"], compact: true)
             }
 
             Card(
@@ -257,8 +268,15 @@ struct PortsView: View {
                         }
                     }
                 }
+                InlineSystemReport(reports: store.systemReports, id: "SPUSBHostDataType",
+                    scopedExcluding: Dictionary(store.network.peripherals.filter { $0.id.hasPrefix("usb-") }.map { device in
+                        (device.name, Set((device.vendor.isEmpty ? [] : ["Manufacturer", "Vendor Name"])
+                                          + (device.speed.isEmpty ? [] : ["Speed"])))
+                    }, uniquingKeysWith: { $0.intersection($1) }), compact: true)
             }
-
+            ForEach(SystemReportCategory.categories(for: .ports).filter { !["SPThunderboltDataType", "SPUSBHostDataType"].contains($0.id) }) { category in
+                SystemReportCard(reports: store.systemReports, id: category.id)
+            }
             HardwareUpdatedLabel(date: store.network.updatedAt)
         }
     }

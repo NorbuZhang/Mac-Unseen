@@ -1,12 +1,20 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject private var store: SensorStore
+    let store: SensorStore
+    @ObservedObject private var navigation: DashboardNavigation
     @EnvironmentObject private var languageSettings: LanguageSettings
-    @AppStorage("detailStyle") private var detailStyleRaw = DetailStyle.accent.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @AppStorage("detailStyle") private var detailStyleRaw = DetailStyle.standard.rawValue
+
+    init(store: SensorStore) {
+        self.store = store
+        self.navigation = store.navigation
+    }
 
     private var detailStyle: DetailStyle {
-        DetailStyle(rawValue: detailStyleRaw) ?? .accent
+        DetailStyle(rawValue: detailStyleRaw) ?? .standard
     }
 
     var body: some View {
@@ -25,15 +33,15 @@ struct ContentView: View {
                             }
                         }
                     }
-                    navigationRow(.about)
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
+
             }
             .background {
                 ZStack {
                     Rectangle()
-                        .fill(.ultraThinMaterial)
+                        .fill(reduceTransparency ? AnyShapeStyle(AppPalette.canvas) : AnyShapeStyle(.ultraThinMaterial))
                     LinearGradient(
                         colors: [
                             AppPalette.blue.opacity(0.09),
@@ -47,13 +55,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
-            .safeAreaInset(edge: .bottom) {
-                SensorStatusPanel()
-                    .padding(12)
-            }
         } detail: {
             Group {
-                switch store.selectedSection ?? .overview {
+                switch navigation.selectedSection ?? .overview {
                 case .overview: OverviewView()
                 case .performance: PerformanceView()
                 case .processes: ProcessesView()
@@ -67,12 +71,13 @@ struct ContentView: View {
                 case .battery: BatteryView()
                 case .storage: StorageView()
                 case .network: NetworkView()
+                case .support: SupportView()
                 case .about: AboutView()
                 }
             }
             .environment(\.detailStyle, detailStyle)
         }
-        .toolbar(removing: store.isMagicAnglePresented ? .sidebarToggle : nil)
+        .toolbar(removing: navigation.isMagicAnglePresented ? .sidebarToggle : nil)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -110,7 +115,7 @@ struct ContentView: View {
                 .help(tr("切换界面语言"))
             }
             ToolbarItem(placement: .primaryAction) {
-                if store.advancedSensorsActive {
+                if navigation.advancedSensorsActive {
                     Button(tr("停止高级传感器"), systemImage: "stop.circle") {
                         store.stopAdvancedSensors()
                     }
@@ -119,17 +124,17 @@ struct ContentView: View {
         }
         .tint(AppPalette.accent)
         .overlay {
-            if store.isMagicAnglePresented {
+            if navigation.isMagicAnglePresented {
                 MagicAngleOverlay {
                     store.dismissMagicAngle()
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985)))
                 .zIndex(100)
             }
         }
         .animation(
-            .spring(response: 0.5, dampingFraction: 0.88),
-            value: store.isMagicAnglePresented
+            reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.35, dampingFraction: 1),
+            value: navigation.isMagicAnglePresented
         )
     }
     private func navigationRow(_ section: DashboardSection) -> some View {
@@ -145,7 +150,7 @@ struct ContentView: View {
                     .symbolRenderingMode(.monochrome)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(
-                        store.selectedSection == section
+                        navigation.selectedSection == section
                             ? AppPalette.brandTeal
                             : Color.secondary
                     )
@@ -158,7 +163,9 @@ struct ContentView: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SubtlePressButtonStyle())
+        .help(section.title)
+        .accessibilityAddTraits(navigation.selectedSection == section ? [.isSelected] : [])
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .listRowInsets(
@@ -167,13 +174,13 @@ struct ContentView: View {
         .listRowBackground(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(
-                    store.selectedSection == section
+                    navigation.selectedSection == section
                         ? AppPalette.brandTeal.opacity(0.10)
                         : Color.clear
                 )
                 .padding(.horizontal, 2)
                 .overlay(alignment: .leading) {
-                    if store.selectedSection == section {
+                    if navigation.selectedSection == section {
                         Capsule()
                             .fill(AppPalette.brandTeal.opacity(0.82))
                             .frame(width: 3, height: 18)
@@ -289,7 +296,7 @@ private struct MagicAngleStory: View {
             HStack {
                 Image(systemName: "laptopcomputer")
                     .font(.title2)
-                    .foregroundStyle(AppPalette.accent)
+                    .foregroundStyle(AppPalette.accentText)
                 Text(tr("104° 背后的故事"))
                     .font(.title2.bold())
                 Spacer()
@@ -330,7 +337,7 @@ private struct MagicAngleStory: View {
                         systemImage: "timer"
                     )
                     .font(.callout)
-                    .foregroundStyle(AppPalette.accent)
+                    .foregroundStyle(AppPalette.accentText)
                     .padding(14)
                     .background(
                         AppPalette.accent.opacity(0.08),
@@ -354,7 +361,7 @@ private struct StorySection: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(AppPalette.accent)
+                .foregroundStyle(AppPalette.accentText)
                 .frame(width: 30, height: 30)
                 .background(
                     AppPalette.accent.opacity(0.09),
@@ -425,55 +432,3 @@ private struct SidebarBrandMark: View {
     }
 }
 
-private struct SensorStatusPanel: View {
-    @EnvironmentObject private var store: SensorStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            StatusLine(
-                title: "高级传感器",
-                active: store.advancedSensorsActive,
-                detail: store.advancedSensorsActive
-                    ? "SPU + SMC"
-                    : store.advancedAccessPending
-                        ? "正在连接传感器…"
-                        : "需要管理员授权"
-            )
-        }
-        .font(.caption)
-        .padding(11)
-        .background(
-            .thinMaterial,
-            in: RoundedRectangle(cornerRadius: 14)
-        )
-        .background(
-            AppPalette.accent.opacity(0.045),
-            in: RoundedRectangle(cornerRadius: 14)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(AppPalette.cardBorder, lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.035), radius: 8, y: 3)
-    }
-}
-
-private struct StatusLine: View {
-    let title: String
-    let active: Bool
-    let detail: String
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(active ? Color.green : Color.secondary)
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(tr(title))
-                    .fontWeight(.medium)
-                Text(tr(detail))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}

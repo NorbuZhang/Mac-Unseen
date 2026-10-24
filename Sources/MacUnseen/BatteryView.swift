@@ -2,6 +2,12 @@ import SwiftUI
 
 struct BatteryView: View {
     @EnvironmentObject private var store: SensorStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func capacityText(_ value: Double?, digits: Int = 0) -> String {
+        guard let value, value.isFinite, value >= 0 else { return "—" }
+        return format(value, digits: digits)
+    }
 
     private var overviewTint: Color {
         guard let percentage = store.battery.percentage else {
@@ -19,10 +25,11 @@ struct BatteryView: View {
     var body: some View {
         Page(
             title: "电池与电源",
-            subtitle: "电池状态、寿命记录、供电来源和 USB-C PD 信息"
+            subtitle: "电池状态、寿命记录、供电来源和 USB-C PD 信息",
+            reportSection: .battery
         ) {
             Card(
-                title: "总览",
+                title: "电池",
                 symbol: "gauge.with.dots.needle.67percent",
                 tint: overviewTint
             ) {
@@ -66,8 +73,12 @@ struct BatteryView: View {
                     ],
                     tint: overviewTint
                 )
+                InlineSystemReport(reports: store.systemReports, id: "SPPowerDataType", selection: .branch("Battery Information"),
+                    excluding: Set(["Charging"] + (store.battery.percentage != nil ? ["State of Charge (%)"] : [])
+                                   + (store.battery.cycleCount != nil ? ["Cycle Count"] : [])
+                                   + (store.battery.healthPercentage != nil ? ["Maximum Capacity"] : [])))
             }
-            .animation(.easeInOut(duration: 0.6), value: overviewTint)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: overviewTint)
 
             Card(title: "历史极值", symbol: "clock.arrow.trianglehead.counterclockwise.rotate.90", tint: .orange) {
                 MetricGrid(
@@ -98,38 +109,50 @@ struct BatteryView: View {
             }
 
             Card(title: "容量", symbol: "chart.bar.fill", tint: .teal) {
+                MetricGrid(metrics: [
+                    Metric(
+                        name: "系统健康度",
+                        value: batteryHealth(store.battery),
+                        unit: store.battery.healthPercentage == nil ? "" : "%",
+                        detail: tr("macOS 的电池评估"),
+                        info: "这是 macOS 系统电源报告中的“最大容量”，用于了解系统对电池老化程度的评估。它可能包含历史平滑和校准，因此不一定等于下方的满充容量比。此页每 5 分钟更新，也可点击“更新资料”；读不到时显示 —，不会用其他比例代替。"
+                    ),
+                    Metric(
+                        name: "满充容量比",
+                        value: capacityText(store.battery.fullChargeCapacityRatio, digits: 1),
+                        unit: store.battery.fullChargeCapacityRatio == nil ? "" : "%",
+                        detail: tr("相对设计容量 · 估算"),
+                        info: "满充容量估算 ÷ 设计容量 × 100%。例如设计为 6000 mAh、当前估算充满可用 6300 mAh，就显示 105%，不封顶 100%。这个比例会受温度、负载和电池校准影响；超过 100% 表示估算容量高于标称值，不代表完全没有老化，也不是系统健康度。缺少满充容量或设计容量时显示 —。"
+                    ),
+                ], tint: .teal, minimumWidth: 240)
+                Text(tr("满充容量比比较的是满充可用容量与标称设计值，不封顶 100%；Qmax 单独列出，不参与这个比例。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SoftDivider()
                 MetricGrid(
                     metrics: [
                         Metric(
                             name: "设计容量",
-                            value: optional(store.battery.designCapacity, digits: 0),
-                            unit: "mAh"
+                            value: capacityText(store.battery.designCapacity),
+                            unit: "mAh",
+                            info: "厂商为这款电池设定的标称容量，是满充容量比的比较基准。它不是每块新电池的实测值，也不是容量的硬上限。"
                         ),
                         Metric(
-                            name: "最大容量",
-                            value: optional(store.battery.maximumCapacity, digits: 0),
+                            name: "满充容量估算",
+                            value: capacityText(store.battery.fullChargeCapacity),
                             unit: "mAh",
-                            info: "Qmax 是电池管理系统估算的电芯容量，不是固定不变的标称值。充放电后，系统可能重新估算，所以这个数值会升高或降低；一次变化不等于电池突然变好或变差。这里显示各电芯 Qmax 的最低值。若机型不提供 Qmax，则使用电池包报告的满充容量。"
+                            info: "电池管理系统估算当前条件下充满后可用的电量，读取 AppleRawMaxCapacity 或 FullChargeCapacity，单位为 mAh。它可能随温度、负载和校准变化，是上方满充容量比的分子；不会用 Qmax 或 NominalChargeCapacity 替代。"
                         ),
                         Metric(
-                            name: "补偿容量",
-                            value: optional(
-                                store.battery.rawMaximumCapacity,
-                                digits: 0
-                            ),
+                            name: "Qmax 电芯容量",
+                            value: capacityText(store.battery.qmaxCapacity),
                             unit: "mAh",
-                            info: "电池包报告的 AppleRawMaxCapacity；部分机型使用同义的 FullChargeCapacity。它包含当前温度、保留区和校准补偿，因此不直接作为最大容量或健康度。"
+                            info: "电池管理系统学习得到的电芯总化学容量估算，这里显示各电芯 Qmax 的最低值。它与电脑实际可用的满充容量口径不同，可能高于设计容量，并会在充放电后重新估算。它不用于计算系统健康度或满充容量比；机型不提供时显示 —。"
                         ),
                         Metric(
                             name: "当前原始电量",
-                            value: optional(store.battery.rawCurrentCapacity, digits: 0),
-                            unit: "mAh"
-                        ),
-                        Metric(
-                            name: "健康度",
-                            value: batteryHealth(store.battery),
-                            unit: "%",
-                            info: "通常显示 macOS 直接报告的 MaxCapacity 百分比；系统会把健康电池封顶为 100%。若可靠的 Qmax 与设计容量之比超过 100%，则显示这个未封顶比例；系统未提供百分比时也使用容量比估算。"
+                            value: capacityText(store.battery.rawCurrentCapacity),
+                            unit: "mAh",
+                            info: "电池此刻估算还剩多少电量，读取 AppleRawCurrentCapacity，单位为 mAh。它会随充电和使用变化；这是剩余电量，不是满充容量，也不是健康度。"
                         ),
                     ],
                     tint: .teal
@@ -210,6 +233,13 @@ struct BatteryView: View {
                     ],
                     tint: .blue
                 )
+                InlineSystemReport(reports: store.systemReports, id: "SPPowerDataType", selection: .branch("AC Charger Information"),
+                    excluding: Set((store.battery.adapterRatedWatts != nil ? ["Wattage (W)"] : [])
+                                   + (store.battery.adapterName != nil ? ["Name"] : [])))
+                if let connection = store.battery.magSafe {
+                    SoftDivider()
+                    MagSafeDetailsView(connection: connection)
+                }
             }
 
             Card(title: "充电器公布的 USB-C PD 档位", symbol: "list.number", tint: .blue) {
@@ -237,6 +267,8 @@ struct BatteryView: View {
                     }
                 }
             }
+            SystemReportCard(reports: store.systemReports, id: "SPPowerDataType", title: "电源设置与计划",
+                             omitting: ["Battery Information", "AC Charger Information"], expanded: false)
         }
     }
 

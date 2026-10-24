@@ -66,6 +66,9 @@ strip -x \
     "$RESOURCES/FanSpeedProbe" \
     "$RESOURCES/LivePowerProbe"
 install -m 644 "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
+if [[ -d "$ROOT/Resources/Support" ]]; then
+    ditto "$ROOT/Resources/Support" "$RESOURCES/Support"
+fi
 # SwiftPM with the current Xcode records the deployment target (15.0) as the
 # executable's SDK version. macOS uses that marker when styling native toolbar
 # controls. Match the 26.5 marker of the previous release to keep its title bar.
