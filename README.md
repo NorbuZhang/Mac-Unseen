@@ -3,6 +3,7 @@
 [简体中文](README.zh-CN.md) · [Download](https://github.com/NorbuZhang/Mac-Unseen/releases) · [What's new in 0.2.0](RELEASE_NOTES_v0.2.0.md)
 
 See what your Mac is doing—from CPU and memory usage to battery details, temperatures, and sensors macOS usually keeps out of sight. Built with SwiftUI for Apple Silicon Macs.
+<img width="2696" height="1644" alt="image" src="https://github.com/user-attachments/assets/3e94146a-38fa-4ed4-84ed-ac935f9daa4c" />
 
 
 ## What you can see
