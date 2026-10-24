@@ -38,6 +38,26 @@ Basic monitoring does not need Python. These builds are not notarized; if macOS 
 
 Most readings need no administrator access. Choose **Enable Hidden Sensors** when you want advanced sensor, fan, power, or full NVMe SMART readings, then approve the macOS prompt. Wi-Fi network names may also need Location permission.
 
+## Running the App
+
+If you download a built app, unzip it and move `Mac Unseen.app` to `Applications` if you want to keep it installed or run it directly.
+
+Because community builds may not be notarized, macOS can block the first launch. If that happens:
+
+<img width="265" height="290" alt="image" src="https://github.com/user-attachments/assets/42c05292-a2bb-4aca-b941-195d020b4308" />
+
+1. Open `System Settings`.
+2. Go to `Privacy & Security`.
+3. Scroll to the security message for Mac Unseen.
+4. Choose `Open Anyway`, then confirm the next launch prompt.
+<img width="1442" height="940" alt="image" src="https://github.com/user-attachments/assets/7648f782-7a78-4478-b6da-64da43eda9cc" />
+
+You can also try right-clicking the app and choosing `Open`, but newer macOS versions may still ask you to approve it in `Privacy & Security`.
+
+Most basic pages work without administrator access. Hidden sensors, fan telemetry, SMC power data, and full internal NVMe SMART data need an administrator prompt because macOS does not expose those readings through ordinary public APIs. In the app, choose `Enable Hidden Sensors` and approve the macOS prompt when it appears.
+
+Wi-Fi SSID display may also require Location permission. macOS treats the current Wi-Fi network name as location-sensitive data. Mac Unseen only shows it locally.
+
 ## Privacy
 
 Hardware readings stay on your Mac. The app does not upload telemetry or change fan speeds, power limits, or brightness. The advanced collector runs after authorization and does not install a persistent service.
