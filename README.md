@@ -4,7 +4,6 @@
 
 See what your Mac is doing—from CPU and memory usage to battery details, temperatures, and sensors macOS usually keeps out of sight. Built with SwiftUI for Apple Silicon Macs.
 
-<img width="1280" alt="Mac Unseen overview in an earlier version" src="https://github.com/user-attachments/assets/52edfa9b-ab73-4547-b5d3-7e7d15fe4345" />
 
 ## What you can see
 
