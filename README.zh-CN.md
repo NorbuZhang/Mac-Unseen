@@ -4,7 +4,6 @@
 
 看看你的 Mac 正在做什么：从 CPU、内存占用，到电池、温度和系统里不容易找到的传感器数据。Mac Unseen 使用 SwiftUI 开发，适用于 Apple Silicon Mac。
 
-<img width="1280" alt="较早版本的 Mac Unseen 总览" src="https://github.com/user-attachments/assets/589d2ae9-9a76-413c-913d-1fb6630d0850" />
 
 ## 能看什么
 
