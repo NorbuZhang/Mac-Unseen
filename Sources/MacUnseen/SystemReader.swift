@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import IOKit
+import IOKit.ps
 
 enum SystemReader {
     static func readSystem(
@@ -246,20 +247,13 @@ enum SystemReader {
             )
         }
 
-        let shouldRefreshAdapterDetails = includeSlow
-            || previous.magSafe?.connectionID != snapshot.magSafe?.connectionID
-            || (!previous.externalConnected && snapshot.externalConnected)
-            || previous.adapterName == nil
-            || previous.adapterName == "外接电源"
-        let adapter = shouldRefreshAdapterDetails
-            ? serviceFirstDictionaryProperty("AdapterDetails", service: service)
-                ?? serviceFirstDictionaryProperty(
-                    "AppleRawAdapterDetails",
-                    service: service
-                )
-            : nil
-        let hasAdapterDetails = adapter.map(adapterIsPresent) == true
-        if let adapter, snapshot.externalConnected || hasAdapterDetails {
+        let reported = IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any]
+        let registry = serviceFirstDictionaryProperty("AdapterDetails", service: service)
+            ?? serviceFirstDictionaryProperty("AppleRawAdapterDetails", service: service)
+        let adapter = reported ?? registry
+        let connected = snapshot.externalConnected || reported != nil
+            || (externalConnected == nil && externalChargeCapable == nil && registry.map(adapterIsPresent) == true)
+        if let adapter, connected {
             snapshot.externalConnected = true
             snapshot.adapterName = adapterDisplayName(adapter)
             snapshot.adapterRatedWatts = validated(
@@ -275,7 +269,7 @@ enum SystemReader {
                 range: 0...15
             )
             snapshot.pdProfiles = []
-            if let profiles = dictionaryArray(adapter["UsbHvcMenu"]) {
+            if let profiles = dictionaryArray(adapter["UsbHvcMenu"] ?? registry?["UsbHvcMenu"]) {
                 snapshot.pdProfiles = profiles.compactMap { profile in
                     guard let voltage = validated(
                               number("MaxVoltage", in: profile),
@@ -288,15 +282,10 @@ enum SystemReader {
                     else {
                         return nil
                     }
-                    return String(
-                        format: "%.0fV × %.2fA (%.0fW)",
-                        voltage / 1000.0,
-                        current / 1000.0,
-                        voltage * current / 1_000_000.0
-                    )
+                    return PDProfile(volts: voltage / 1000, amps: current / 1000)
                 }
             }
-        } else if !snapshot.externalConnected {
+        } else {
             snapshot.adapterName = nil
             snapshot.adapterRatedWatts = nil
             snapshot.negotiatedVoltage = nil
@@ -304,6 +293,18 @@ enum SystemReader {
             snapshot.pdProfiles = []
         }
 
+        snapshot.activeProfile = nil
+        if let ports = dictionaryArray(serviceProperty("PortControllerInfo", service: service)),
+           let contract = PDProfile.activeContract(ports: ports) {
+            snapshot.externalConnected = true
+            snapshot.activeProfile = contract.selected
+            snapshot.pdProfiles = contract.profiles
+            snapshot.negotiatedVoltage = contract.selected.volts
+            snapshot.negotiatedCurrent = contract.current
+        }
+        snapshot.liveInputVoltage = nil
+        snapshot.liveInputCurrent = nil
+        snapshot.liveInputPower = nil
         if let telemetry = serviceDictionaryProperty(
             "PowerTelemetryData",
             service: service

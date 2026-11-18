@@ -103,7 +103,7 @@ struct MotionView: View {
                     } else {
                         Sparkline(
                             values: store.vibrationHistory,
-                            tint: .orange
+                            tint: .orange, capacity: HistoryCapacity.sensor
                         )
                         .frame(height: 110)
                     }

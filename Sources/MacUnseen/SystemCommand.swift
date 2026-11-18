@@ -27,6 +27,7 @@ final class SystemCommand: @unchecked Sendable {
 
     func run(executable: String, arguments: [String], timeout: TimeInterval) -> Data? {
         let child = Process()
+        child.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
         let output = Pipe()
         child.executableURL = URL(fileURLWithPath: executable)
         child.arguments = arguments

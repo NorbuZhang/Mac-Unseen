@@ -235,8 +235,8 @@ struct PortsView: View {
                         }
                     }
                 }
-                InlineSystemReport(reports: store.systemReports, id: "SPThunderboltDataType", omitting: ["Port"], compact: true)
             }
+            SystemReportCard(reports: store.systemReports, id: "SPThunderboltDataType", expanded: false)
 
             Card(
                 title: "已连接外设",

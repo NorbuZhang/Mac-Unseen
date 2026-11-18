@@ -91,7 +91,7 @@ struct AccordionSettingsView: View {
         }
         .padding(26)
         .frame(width: 540)
-        .background(AccordionWindowReader { controller.settingsWindow = $0 })
+        .background(WindowReader { controller.settingsWindow = $0 })
         .onDisappear { controller.settingsWindow = nil }
     }
 
@@ -112,7 +112,7 @@ struct AccordionSettingsView: View {
     }
 }
 
-struct AccordionWindowReader: NSViewRepresentable {
+struct WindowReader: NSViewRepresentable {
     var onWindow: (NSWindow?) -> Void
     func makeNSView(context: Context) -> WindowView { WindowView(onWindow: onWindow) }
     func updateNSView(_ nsView: WindowView, context: Context) { nsView.onWindow = onWindow }

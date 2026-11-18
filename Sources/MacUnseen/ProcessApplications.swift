@@ -6,7 +6,7 @@ struct ProcessApplication: Equatable, Sendable {
 
     static func bundlePath(for executable: String) -> String? {
         guard executable.hasPrefix("/") else { return nil }
-        let parts = (executable as NSString).standardizingPath.components(separatedBy: "/")
+        let parts = executable.components(separatedBy: "/")
         guard let index = parts.firstIndex(where: { $0.hasSuffix(".app") }) else { return nil }
         // Use the outer application, not its nested Helper.app bundles.
         return parts[...index].joined(separator: "/")

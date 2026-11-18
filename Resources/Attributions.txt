@@ -89,3 +89,5 @@ Private API notice
 Apple does not document the SPU and MultitouchSupport interfaces used here.
 They may change in future macOS releases. Mac Unseen only reads sensor
 reports and does not change fan curves, power limits, or hardware settings.
+
+Bundled fan service and socket client adapted from jbforge/mac-fan-control (MIT). See Licenses/FanControl-MIT.txt.

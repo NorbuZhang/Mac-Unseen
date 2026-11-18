@@ -52,6 +52,9 @@ struct FansView: View {
             title: "风扇",
             subtitle: "当前转速、目标转速与硬件限制"
         ) {
+            if store.advanced.capabilities["fans"] != "unsupported" {
+                FanControlCard()
+            }
             if store.advancedSensorsActive {
                 let fanCapability = store.advanced.capabilities["fans"]
                 let fanMetrics = store.advanced.telemetry["Fans"] ?? []

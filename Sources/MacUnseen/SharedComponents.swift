@@ -388,8 +388,11 @@ struct MetricTile: View {
     var info: String?
     var tint: Color = .accentColor
     var expanded = false
+    var uniformValueSize: CGFloat?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.detailStyle) private var detailStyle
+
+    private var tileHeight: CGFloat { expanded ? 106 : (uniformValueSize == nil ? 78 : 86) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: expanded ? 5 : 3) {
@@ -406,14 +409,15 @@ struct MetricTile: View {
                 Text(tr(value))
                     .font(
                         .system(
-                            size: expanded ? 24 : 21,
+                            size: uniformValueSize ?? (expanded ? 24 : 21),
                             weight: .semibold,
                             design: .rounded
                         )
                     )
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(uniformValueSize == nil ? 0.7 : 1)
+                    .fixedSize(horizontal: false, vertical: uniformValueSize != nil)
                 if !unit.isEmpty {
                     Text(tr(unit))
                         .font(.caption)
@@ -431,8 +435,8 @@ struct MetricTile: View {
         .padding(expanded ? 15 : 11)
         .frame(
             maxWidth: .infinity,
-            minHeight: expanded ? 106 : 78,
-            maxHeight: expanded ? 106 : 78,
+            minHeight: tileHeight,
+            maxHeight: tileHeight,
             alignment: .topLeading
         )
         .background {
@@ -466,6 +470,7 @@ struct MetricGrid: View {
     let metrics: [Metric]
     var tint: Color = .accentColor
     var minimumWidth: CGFloat = 145
+    var uniformValueSize: CGFloat?
 
     private var needsExpandedTiles: Bool {
         metrics.contains { metric in
@@ -484,7 +489,8 @@ struct MetricGrid: View {
                     detail: metric.detail,
                     info: metric.info,
                     tint: tint,
-                    expanded: needsExpandedTiles
+                    expanded: needsExpandedTiles,
+                    uniformValueSize: uniformValueSize
                 )
             }
         }

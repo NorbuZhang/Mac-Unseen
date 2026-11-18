@@ -4,6 +4,40 @@ import SystemMonitorBridge
 @testable import MacUnseen
 
 final class MonitoringTests: XCTestCase {
+    func testExtendedPowerContractUsesSelectedSlotIncludingSPRPadding() throws {
+        let twentyVolts = (400 << 10) | 500
+        let twentyEightVolts = (560 << 10) | 500
+        let words = [twentyVolts, 0, 0, 0, 0, 0, 0, twentyEightVolts]
+        let active: [String: Any] = ["PortControllerActiveContractRdo": UInt32(8) << 28 | 500 << 10 | 500,
+                                     "PortControllerLoserReason": 0, "PortControllerPortPDO": words]
+        let contract = try XCTUnwrap(PDProfile.activeContract(ports: [active]))
+        XCTAssertEqual(contract.selected, PDProfile(volts: 28, amps: 5))
+        XCTAssertEqual(contract.current, 5)
+        XCTAssertEqual(contract.profiles.count, 2)
+        XCTAssertNil(PDProfile.activeContract(ports: [active, active]))
+        var snapshot = BatterySnapshot()
+        snapshot.externalConnected = true
+        snapshot.negotiatedVoltage = 20
+        snapshot.negotiatedCurrent = 4
+        XCTAssertFalse(snapshot.matchesInput(voltage: 26.33, power: 131.72))
+    }
+
+    func testByteUnitsFollowAppLanguage() {
+        let original = AppLocalization.language
+        defer { AppLocalization.language = original }
+        for language in [AppLanguage.english, .simplifiedChinese, .english] {
+            AppLocalization.language = language
+            for count in [1.0, 512, 1024, 1048576] {
+                let expected = ByteCountFormatStyle(style: .memory)
+                    .locale(Locale(identifier: language.rawValue)).format(Int64(count))
+                XCTAssertEqual(formatMonitoredBytes(count), expected)
+            }
+            if language == .english {
+                XCTAssertFalse(formatMonitoredBytes(512).contains("字节"))
+            }
+        }
+    }
+
     func testNetworkEnumerationMatchesIndependentInterfaceList() throws {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         XCTAssertEqual(getifaddrs(&interfaces), 0)
@@ -132,13 +166,25 @@ final class MonitoringTests: XCTestCase {
         XCTAssertNil(interval(.trackpad, active: false, trackpad: true))
     }
 
+    func testLatestHistorySampleStaysOnTheRightAsPreviousSamplesScrollLeft() {
+        for capacity in [HistoryCapacity.cpu, MemoryPressureHistory.capacity, HistoryCapacity.sensor] {
+            let width = CGFloat(capacity) * 2
+            let right = HistoryAxis.x(index: 0, count: 1, capacity: capacity, width: width)
+            XCTAssertEqual(right, width - 1)
+            for count in [2, capacity] {
+                XCTAssertEqual(HistoryAxis.x(index: count - 1, count: count, capacity: capacity, width: width), right)
+                XCTAssertEqual(HistoryAxis.x(index: count - 2, count: count, capacity: capacity, width: width), right - 2)
+            }
+        }
+    }
+
     func testPressureHistoryUsesSystemLevelsAndKeepsMissingSamplesAsGaps() {
         var history = MemoryPressureHistory()
         for (index, raw) in [1, 2, 4, 99, nil].enumerated() {
-            history.append(rawLevel: raw, at: Date(timeIntervalSince1970: Double(index)))
+            history.append(rawLevel: raw, percent: [12, 12, 92, nil, 0][index], at: Date(timeIntervalSince1970: Double(index)))
         }
         XCTAssertEqual(history.samples.map(\.level), [.normal, .warning, .critical, nil, nil])
-        XCTAssertEqual(history.samples[2].level?.chartLevel, 3)
+        XCTAssertEqual(history.samples.map(\.percent), [12, 12, 92, nil, 0])
         // The pressure enum is discrete and independent of physical-memory usage.
         XCTAssertNil(MemoryPressureLevel(rawValue: 75))
         history.append(rawLevel: 1, at: Date(timeIntervalSince1970: 3))

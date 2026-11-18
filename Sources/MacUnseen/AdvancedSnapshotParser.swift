@@ -31,7 +31,8 @@ enum AdvancedSnapshotParser {
                     x: number(accelerometer["x"]) ?? 0,
                     y: number(accelerometer["y"]) ?? 0,
                     z: number(accelerometer["z"]) ?? 0,
-                    magnitude: number(accelerometer["magnitude"])
+                    magnitude: number(accelerometer["magnitude"]),
+                    timestamp: number(accelerometer["timestamp"])
                 )
             }
             if let gyroscope = motion["gyroscope"] as? [String: Any] {

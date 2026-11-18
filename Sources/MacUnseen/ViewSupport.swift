@@ -1,49 +1,54 @@
 import SwiftUI
 
+/// Oldest-to-newest samples occupy fixed slots, with the latest always at the right edge.
+enum HistoryAxis {
+    static func x(index: Int, count: Int, capacity: Int, width: CGFloat) -> CGFloat {
+        width * (CGFloat(capacity - count + index) + 0.5) / CGFloat(capacity)
+    }
+}
+
 struct Sparkline: View {
     let values: [Double]
     let tint: Color
+    let capacity: Int
 
     var body: some View {
-        GeometryReader { geometry in
-            let maximum = max(values.max() ?? 0.001, 0.001)
-            Path { path in
-                guard values.count > 1 else {
-                    return
-                }
-                for (index, value) in values.enumerated() {
-                    let x = geometry.size.width
-                        * Double(index) / Double(values.count - 1)
-                    let y = geometry.size.height
-                        * (1 - min(1, max(0, value / maximum)))
-                    if index == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
-                    }
+        Canvas { context, size in
+            let samples = values.suffix(capacity)
+            let maximum = max(samples.max() ?? 0, 0.001)
+            var path = Path()
+            for (index, value) in samples.enumerated() {
+                let fraction = min(1, max(0, value / maximum))
+                let point = CGPoint(
+                    x: HistoryAxis.x(index: index, count: samples.count, capacity: capacity, width: size.width),
+                    y: 2 + (size.height - 4) * (1 - fraction)
+                )
+                if samples.count == 1 {
+                    context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)), with: .color(tint))
+                } else if index == 0 {
+                    path.move(to: point)
+                } else {
+                    path.addLine(to: point)
                 }
             }
-            .stroke(
-                tint.gradient,
-                style: StrokeStyle(lineWidth: 2.5, lineJoin: .round)
-            )
-            .background {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                tint.opacity(0.11),
-                                Color.primary.opacity(0.025),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+            context.stroke(path, with: .style(tint.gradient), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            tint.opacity(0.11),
+                            Color.primary.opacity(0.025),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(tint.opacity(0.12), lineWidth: 1)
-                    }
-            }
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(tint.opacity(0.12), lineWidth: 1)
+                }
         }
     }
 }
@@ -60,10 +65,10 @@ func formatBytes(_ bytes: Double) -> String {
     guard bytes > 0 else {
         return "-"
     }
-    return ByteCountFormatter.string(
-        fromByteCount: Int64(bytes),
-        countStyle: .memory
-    )
+    // Follow the in-app language rather than the Mac's system language.
+    return ByteCountFormatStyle(style: .memory)
+        .locale(Locale(identifier: AppLocalization.language.rawValue))
+        .format(Int64(bytes))
 }
 
 /// Explicit numeric conversion: passing Double.init to Optional.map can select

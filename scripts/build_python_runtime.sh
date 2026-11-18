@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Mac Unseen"
+APP_NAME="Mac Unseen 0.2.1"
 PYTHON_VERSION="3.14"
 PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework"
 STANDARD_APP="$ROOT/outputs/$APP_NAME.app"

@@ -145,7 +145,7 @@ struct SystemReportCard: View {
                     else if nodes.isEmpty { Text(tr("没有匹配的项目")).foregroundStyle(.secondary).font(.callout) }
                     else {
                         ReportFields(nodes: nodes, collapseItems: !category.startsExpanded || source.count > 12,
-                                     searching: !query.isEmpty).id(category.id + String(report.sampledAt.timeIntervalSince1970))
+                                     searching: !query.isEmpty, softwareCategory: category.id).id(category.id + String(report.sampledAt.timeIntervalSince1970))
                     }
                     Text(tr("资料读取于") + " " + report.sampledAt.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
@@ -172,6 +172,11 @@ struct ReportFields: View {
     let nodes: [SystemReportNode]
     var collapseItems = false
     var searching = false
+    var softwareCategory: String?
+    private static let softwareReports: Set<String> = [
+        "SPApplicationsDataType", "SPInstallHistoryDataType", "SPExtensionsDataType", "SPFrameworksDataType",
+        "SPPrefPaneDataType", "SPLegacySoftwareDataType", "SPDeveloperToolsDataType", "SPPrintersSoftwareDataType", "SPFontsDataType"
+    ]
     @State private var collapsed: Set<Int> = []
     @State private var initialized = false
     var body: some View {
@@ -187,6 +192,9 @@ struct ReportFields: View {
                         }.buttonStyle(.plain).disabled(searching)
                             .accessibilityLabel(SystemReportLabels.localized(entry.node.label))
                             .accessibilityValue(tr(collapsed.contains(entry.id) && !searching ? "已折叠" : "已展开"))
+                    }
+                    if entry.depth == 0, let softwareCategory, Self.softwareReports.contains(softwareCategory) {
+                        SoftwareIcon(record: entry.node)
                     }
                     Text(SystemReportLabels.localized(entry.node.label, value: entry.node.value))
                         .foregroundStyle(entry.node.value == nil ? .primary : .secondary)

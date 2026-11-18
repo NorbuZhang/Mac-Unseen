@@ -157,7 +157,7 @@ struct TrackpadView: View {
                 ) {
                     Sparkline(
                         values: store.trackpadPressureHistory,
-                        tint: .pink
+                        tint: .pink, capacity: HistoryCapacity.sensor
                     )
                     .frame(height: 90)
                 }

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/work/.build"
 PACKAGE_DIR="$ROOT/work/package"
-APP_NAME="Mac Unseen"
+APP_NAME="Mac Unseen 0.2.1"
 EXECUTABLE_NAME="MacUnseen"
 STAGE_APP="$PACKAGE_DIR/$APP_NAME.app"
 OUTPUT_APP="$ROOT/outputs/$APP_NAME.app"
@@ -81,6 +81,7 @@ xcrun vtool -set-build-version macos "$MINIMUM_MACOS_VERSION" 26.5 \
 install -m 755 "$COMPAT_EXECUTABLE" "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 rm -f "$COMPAT_EXECUTABLE"
 install -m 644 "$ROOT/Resources/Attributions.txt" "$RESOURCES/Attributions.txt"
+install -m 644 "$ROOT/Resources/Licenses/FanControl-MIT.txt" "$RESOURCES/Licenses/FanControl-MIT.txt"
 install -m 644 "$ROOT/Resources/Licenses/MAcordion.txt" "$RESOURCES/Licenses/MAcordion.txt"
 install -m 644 "$ROOT/OPEN_SOURCE_COMPLIANCE.md" \
     "$RESOURCES/OPEN_SOURCE_COMPLIANCE.md"
@@ -167,6 +168,9 @@ fi
 
 PYTHONPYCACHEPREFIX="$ROOT/work/pycache" \
     /usr/bin/python3 -m py_compile "$RESOURCES/advanced_sensor_helper.py"
+"$ROOT/scripts/package_fan_service.sh" "$RESOURCES/FanService.pkg"
+FAN_PACKAGE_SHA="$(/usr/bin/shasum -a 256 "$RESOURCES/FanService.pkg" | /usr/bin/cut -d ' ' -f 1)"
+/usr/bin/plutil -insert FanServiceSHA256 -string "$FAN_PACKAGE_SHA" "$CONTENTS/Info.plist"
 plutil -lint "$CONTENTS/Info.plist"
 codesign --force --deep --sign - "$STAGE_APP"
 codesign --verify --deep --strict --verbose=2 "$STAGE_APP"

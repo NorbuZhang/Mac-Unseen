@@ -5,6 +5,5 @@ import Combine
 @MainActor
 final class DashboardNavigation: ObservableObject {
     @Published var selectedSection: DashboardSection? = .overview
-    @Published var advancedSensorsActive = false
     @Published var isMagicAnglePresented = false
 }

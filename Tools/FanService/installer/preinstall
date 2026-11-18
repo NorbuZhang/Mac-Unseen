@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+[ "$3" = "/" ] || exit 1
+label=com.norbu.MacUnseen.fanctld
+# Do not displace another configured provider of the same fan-control socket.
+for other in io.github.jbforge.fanctld homebrew.mxcl.mac-fan-control; do
+    if [ -f "/Library/LaunchDaemons/$other.plist" ] || /bin/launchctl print "system/$other" >/dev/null 2>&1; then
+        echo "An existing fanctld installation must be started or removed first." >&2
+        exit 1
+    fi
+done
+if /bin/launchctl print "system/$label" >/dev/null 2>&1; then
+    /bin/launchctl bootout "system/$label"
+    i=0
+    while /bin/launchctl print "system/$label" >/dev/null 2>&1; do
+        i=$((i+1)); [ "$i" -lt 50 ] || exit 1; /bin/sleep 0.2
+    done
+elif [ -S /var/run/fanctld.sock ]; then
+    echo "The fan control socket is already in use." >&2
+    exit 1
+fi

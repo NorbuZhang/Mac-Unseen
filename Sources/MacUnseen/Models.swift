@@ -102,6 +102,7 @@ struct VectorReading: Equatable {
     var y = 0.0
     var z = 0.0
     var magnitude: Double?
+    var timestamp: Double?
 }
 
 struct OrientationReading: Equatable {
@@ -180,6 +181,38 @@ struct SystemSnapshot: Equatable, Sendable {
     var thermalState = "正常"
 }
 
+struct PDProfile: Equatable {
+    // Fixed-supply PDOs use 50 mV and 10 mA units. The RDO selects a 1-based slot.
+    static func activeContract(ports: [[String: Any]]) -> (profiles: [PDProfile], selected: PDProfile, current: Double)? {
+        let active = ports.filter {
+            (($0["PortControllerActiveContractRdo"] as? NSNumber)?.uint32Value ?? 0) != 0
+                && ($0["PortControllerLoserReason"] as? NSNumber)?.intValue == 0
+        }
+        guard active.count == 1, let port = active.first,
+              let rdo = (port["PortControllerActiveContractRdo"] as? NSNumber)?.uint32Value,
+              let words = port["PortControllerPortPDO"] as? [NSNumber] else { return nil }
+        func decode(_ number: NSNumber) -> PDProfile? {
+            let word = number.uint32Value
+            let volts = Double((word >> 10) & 1023) / 20
+            let amps = Double(word & 1023) / 100
+            guard word >> 30 == 0, volts > 0, amps > 0 else { return nil }
+            return PDProfile(volts: volts, amps: amps)
+        }
+        let slot = Int((rdo >> 28) & 15) - 1
+        guard words.indices.contains(slot), let selected = decode(words[slot]) else { return nil }
+        let current = Double((rdo >> 10) & 1023) / 100
+        guard current > 0, current <= selected.amps else { return nil }
+        return (words.compactMap(decode), selected, current)
+    }
+
+    let volts: Double
+    let amps: Double
+
+    var label: String {
+        String(format: "%gV × %.2fA (%.0fW)", volts, amps, volts * amps)
+    }
+}
+
 struct BatterySnapshot: Equatable {
     var percentage: Double?
     var cycleCount: Int?
@@ -208,7 +241,17 @@ struct BatterySnapshot: Equatable {
     var liveInputPower: Double?
     var liveInputVoltage: Double?
     var liveInputCurrent: Double?
-    var pdProfiles: [String] = []
+    func matchesInput(voltage: Double?, power: Double?) -> Bool {
+        guard externalConnected, let v = negotiatedVoltage, let a = negotiatedCurrent,
+              v > 0, a > 0 else { return false }
+        if let voltage, voltage > 1, abs(voltage - v) > v * 0.10 { return false }
+        if let power, power > v * a * 1.10 { return false }
+        if activeProfile == nil, let watts = adapterRatedWatts, watts + 2 < v * a { return false }
+        return true
+    }
+
+    var activeProfile: PDProfile?
+    var pdProfiles: [PDProfile] = []
 
     /// Same pack-level mAh units; deliberately independent of Qmax and system health.
     /// Values above 100% are meaningful relative to the manufacturer's design rating.

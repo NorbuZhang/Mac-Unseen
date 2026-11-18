@@ -2,7 +2,7 @@ import SwiftUI
 
 extension MemoryPressureLevel {
     var color: Color {
-        switch self { case .normal: .green; case .warning: .yellow; case .critical: .red }
+        switch self { case .normal: .green; case .warning: .orange; case .critical: .red }
     }
 }
 
@@ -25,6 +25,7 @@ struct MemoryMonitoringCard: View {
                     Text(tr("内存压力")) .font(.headline)
                     Spacer()
                     HStack(spacing: 5) {
+                        Text(reading.pressurePercent.map { "\($0)%" } ?? "—").monospacedDigit()
                         Circle().fill(level?.color ?? .secondary).frame(width: 7, height: 7)
                         Text(tr(level?.title ?? "不可用")).font(.callout.weight(.medium))
                     }
@@ -47,7 +48,7 @@ struct MemoryMonitoringCard: View {
                     Spacer()
                     Text(tr("虚线：采样暂停"))
                 }.font(.caption).foregroundStyle(.secondary)
-                Text(tr("曲线记录系统报告的压力等级，不是内存占用百分比。切换页面或进入后台时保留已有样本，返回后继续；暂停时间压缩为虚线，空白表示无数据。"))
+                Text(tr("高度采用活动监视器的压力曲线读数（100 减去内核内存状态值）。绿色、橙色、红色分别表示系统报告的正常、偏高和很高压力。"))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             SoftDivider()
@@ -86,50 +87,57 @@ struct MemoryPressureGraph: View {
     var body: some View {
         HStack(spacing: 10) {
             GeometryReader { geometry in
-                ForEach(MemoryPressureLevel.allCases, id: \.self) { level in
-                    Text(tr(level.title)).font(.caption2).foregroundStyle(.secondary)
+                ForEach([0, 50, 100], id: \.self) { percent in
+                    Text("\(percent)%").font(.caption2).foregroundStyle(.secondary)
                         .frame(width: geometry.size.width, alignment: .trailing)
                         .position(x: geometry.size.width / 2,
-                                  y: geometry.size.height - level.chartLevel / 3 * (geometry.size.height - 10))
+                                  y: geometry.size.height - 5 - Double(percent) / 100 * (geometry.size.height - 10))
                 }
             }.frame(width: 46)
             Canvas { context, size in
                 let plotHeight = size.height - 10
-                for level in [1.0, 2.0, 3.0] {
+                for fraction in [0.0, 0.5, 1.0] {
                     var grid = Path()
-                    let y = size.height - level / 3 * plotHeight
+                    let y = size.height - 5 - fraction * plotHeight
                     grid.move(to: CGPoint(x: 0, y: y))
                     grid.addLine(to: CGPoint(x: size.width, y: y))
                     context.stroke(grid, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 }
-                let columns = history.plotColumns
-                let count = max(MemoryPressureHistory.capacity, columns.count)
-                let width = size.width / Double(count)
-                let leading = count - columns.count
-                var previousY: CGFloat?
+                let capacity = MemoryPressureHistory.capacity
+                let columns = history.plotColumns.suffix(capacity)
+                var previous: CGPoint?
                 for (index, column) in columns.enumerated() {
-                    let x = Double(leading + index) * width
+                    let x = HistoryAxis.x(index: index, count: columns.count, capacity: capacity, width: size.width)
                     guard case let .sample(sample) = column else {
                         var marker = Path()
-                        marker.move(to: CGPoint(x: x + width / 2, y: 0))
-                        marker.addLine(to: CGPoint(x: x + width / 2, y: size.height))
+                        marker.move(to: CGPoint(x: x, y: 0))
+                        marker.addLine(to: CGPoint(x: x, y: size.height))
                         context.stroke(marker, with: .color(.secondary.opacity(0.65)),
                                        style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                        previousY = nil
+                        previous = nil
                         continue
                     }
-                    guard let level = sample.level else { previousY = nil; continue }
-                    let height = level.chartLevel / 3 * plotHeight
-                    let rect = CGRect(x: x, y: size.height - height, width: width, height: height)
-                    context.fill(Path(rect), with: .color(level.color.opacity(0.24)))
-                    context.fill(Path(CGRect(x: x, y: rect.minY, width: width, height: 2)), with: .color(level.color))
-                    if let previousY, previousY != rect.minY {
-                        var edge = Path()
-                        edge.move(to: CGPoint(x: x, y: previousY))
-                        edge.addLine(to: CGPoint(x: x, y: rect.minY))
-                        context.stroke(edge, with: .color(level.color), lineWidth: 1.5)
+                    guard let percent = sample.percent else { previous = nil; continue }
+                    let color = sample.level?.color ?? .secondary
+                    let baseline = size.height - 5
+                    let point = CGPoint(x: x, y: baseline - Double(percent) / 100 * plotHeight)
+                    if let previous {
+                        var line = Path()
+                        line.move(to: previous)
+                        line.addLine(to: point)
+                        var area = line
+                        area.addLine(to: CGPoint(x: point.x, y: baseline))
+                        area.addLine(to: CGPoint(x: previous.x, y: baseline))
+                        area.closeSubpath()
+                        context.fill(area, with: .linearGradient(
+                            Gradient(colors: [color.opacity(0.48), color.opacity(0.12)]),
+                            startPoint: CGPoint(x: 0, y: 5), endPoint: CGPoint(x: 0, y: baseline)))
+                        context.stroke(line, with: .color(color), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    } else {
+                        context.fill(Path(ellipseIn: CGRect(x: point.x - 1.5, y: point.y - 1.5,
+                                                            width: 3, height: 3)), with: .color(color))
                     }
-                    previousY = rect.minY
+                    previous = point
                 }
             }
             .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 4))

@@ -8,8 +8,7 @@ struct AboutView: View {
         ) {
             Card(title: "数据边界", symbol: "shield.lefthalf.filled", tint: .green) {
                 Text(tr(
-                    "应用只读取传感器。首版不会设置风扇转速、修改屏幕或键盘亮度、"
-                    + "运行快捷指令，也不会上传数据。管理员辅助进程退出后不会安装常驻服务。"
+                    "传感器读数在本机处理。首次启用风扇控制时，macOS 会请求管理员授权并安装本地服务。退出应用后，服务会继续执行已应用的风扇设置。"
                 ))
                 .foregroundStyle(.secondary)
             }

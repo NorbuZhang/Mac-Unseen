@@ -3,6 +3,10 @@ import Foundation
 import IOKit
 import SystemMonitorBridge
 
+enum PerformanceMetric: CaseIterable, Sendable {
+    case cpu, gpu, memory, disk, network
+}
+
 /// Serialized, off the UI actor. Each page session owns a reader so returning
 /// from another page, sleep or background never reuses an old rate baseline.
 actor PerformanceReader {
@@ -14,10 +18,10 @@ actor PerformanceReader {
     private var previousProcessTime: TimeInterval?
     private var appMetadata: [String: ProcessApplication] = [:]
 
-    func sample() -> PerformanceReading {
+    func sample(including metrics: Set<PerformanceMetric> = Set(PerformanceMetric.allCases)) -> PerformanceReading {
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = previousTime.map { now - $0 } ?? 0
-        let counters = Self.cpuCounters()
+        let counters = metrics.contains(.cpu) ? Self.cpuCounters() : nil
         var value = PerformanceReading()
         if let counters, let old = previousCPU, old.count == counters.count,
            elapsed > 0, elapsed <= 10 {
@@ -30,14 +34,14 @@ actor PerformanceReader {
             }
             value.cpu = total(counters).usage(since: total(old))
         }
-        value.memory = Self.memory()
-        value.gpus = Self.gpus()
-        let disk = Self.diskCounters()
-        let network = Self.networkCounters()
+        if metrics.contains(.memory) { value.memory = Self.memory() }
+        if metrics.contains(.gpu) { value.gpus = Self.gpus() }
+        let disk = metrics.contains(.disk) ? Self.diskCounters() : nil
+        let network = metrics.contains(.network) ? Self.networkCounters() : nil
         (value.diskRead, value.diskWrite) = SampleDelta.rates(current: disk, previous: previousDisk, elapsed: elapsed)
         (value.networkReceive, value.networkSend) = SampleDelta.rates(current: network, previous: previousNetwork, elapsed: elapsed)
         var loads = [Double](repeating: 0, count: 3)
-        if getloadavg(&loads, 3) == 3 { value.loadAverages = loads }
+        if metrics.contains(.cpu), getloadavg(&loads, 3) == 3 { value.loadAverages = loads }
         previousCPU = counters; previousDisk = disk; previousNetwork = network; previousTime = now
         value.sampledAt = Date()
         return value
@@ -73,12 +77,9 @@ actor PerformanceReader {
                 if let path, let bundlePath = ProcessApplication.bundlePath(for: path) {
                     liveApplications.insert(bundlePath)
                     if let cached = appMetadata[bundlePath] { application = cached }
-                    else if let bundle = Bundle(path: bundlePath), bundle.infoDictionary?["CFBundlePackageType"] as? String == "APPL" {
-                        let name = (bundle.localizedInfoDictionary?["CFBundleDisplayName"] as? String)
-                            ?? (bundle.infoDictionary?["CFBundleDisplayName"] as? String)
-                            ?? (bundle.localizedInfoDictionary?["CFBundleName"] as? String)
-                            ?? (bundle.infoDictionary?["CFBundleName"] as? String)
-                            ?? URL(fileURLWithPath: bundlePath).deletingPathExtension().lastPathComponent
+                    else {
+                        // Derive names from the kernel path without opening bundles in user folders.
+                        let name = ((bundlePath as NSString).lastPathComponent as NSString).deletingPathExtension
                         let app = ProcessApplication(bundlePath: bundlePath, name: name)
                         appMetadata[bundlePath] = app; application = app
                     }
@@ -153,6 +154,10 @@ actor PerformanceReader {
         var length = MemoryLayout<xsw_usage>.size
         if sysctlbyname("vm.swapusage", &swap, &length, nil, 0) == 0 { value.swapUsed = Double(swap.xsu_used) }
         value.pressure = SystemIdentityReader.integer("kern.memorystatus_vm_pressure_level")
+        // This sysctl and Activity Monitor’s memorystatus_get_level read the same XNU variable.
+        if let available = SystemIdentityReader.integer("kern.memorystatus_level"), (0...100).contains(available) {
+            value.pressurePercent = 100 - available
+        }
         return value
     }
 
@@ -188,7 +193,7 @@ actor PerformanceReader {
         return success && !counters.isEmpty ? counters : nil
     }
 
-    nonisolated private static func networkCounters() -> [String: ByteCounters]? {
+    nonisolated static func networkCounters() -> [String: ByteCounters]? {
         var pointer: UnsafeMutablePointer<MUNetworkSample>?
         let count = MUCopyNetworkSamples(&pointer)
         guard count >= 0, let pointer else { return nil }

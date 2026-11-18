@@ -201,18 +201,18 @@ struct BatteryView: View {
                 MetricGrid(
                     metrics: [
                         Metric(
-                            name: "额定功率",
+                            name: "系统报告功率",
                             value: optional(store.battery.adapterRatedWatts, digits: 0),
                             unit: "W"
                         ),
                         Metric(
                             name: "协商电压",
-                            value: optional(store.battery.negotiatedVoltage, digits: 1),
+                            value: optional(contractConfirmed ? store.battery.negotiatedVoltage : nil, digits: 1),
                             unit: "V"
                         ),
                         Metric(
                             name: "协商上限电流",
-                            value: optional(store.battery.negotiatedCurrent, digits: 2),
+                            value: optional(contractConfirmed ? store.battery.negotiatedCurrent : nil, digits: 2),
                             unit: "A"
                         ),
                         Metric(
@@ -233,9 +233,12 @@ struct BatteryView: View {
                     ],
                     tint: .blue
                 )
+                SpecificationGrid(rows: [
+                    ("已连接", tr(store.battery.externalConnected ? "是" : "否")),
+                    ("正在充电", tr(store.battery.charging ? "是" : "否")),
+                ])
                 InlineSystemReport(reports: store.systemReports, id: "SPPowerDataType", selection: .branch("AC Charger Information"),
-                    excluding: Set((store.battery.adapterRatedWatts != nil ? ["Wattage (W)"] : [])
-                                   + (store.battery.adapterName != nil ? ["Name"] : [])))
+                                   excluding: ["Connected", "Charging", "Wattage (W)", "Name"])
                 if let connection = store.battery.magSafe {
                     SoftDivider()
                     MagSafeDetailsView(connection: connection)
@@ -253,11 +256,10 @@ struct BatteryView: View {
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .frame(width: 24)
-                            Text(profile)
+                            Text(profile.label)
                             Spacer()
-                            if store.battery.negotiatedVoltage.map({
-                                profile.hasPrefix(String(format: "%.0fV", $0))
-                            }) == true {
+                            if contractConfirmed, profile == store.battery.activeProfile ||
+                                (store.battery.activeProfile == nil && profile.volts == store.battery.negotiatedVoltage && profile.amps == store.battery.negotiatedCurrent) {
                                 Text(tr("当前"))
                                     .font(.caption.bold())
                                     .foregroundStyle(.blue)
@@ -270,6 +272,11 @@ struct BatteryView: View {
             SystemReportCard(reports: store.systemReports, id: "SPPowerDataType", title: "电源设置与计划",
                              omitting: ["Battery Information", "AC Charger Information"], expanded: false)
         }
+    }
+
+    private var contractConfirmed: Bool {
+        store.battery.matchesInput(voltage: freshLivePower?.inputVoltage ?? store.battery.liveInputVoltage,
+                                   power: freshLivePower?.inputPower ?? store.battery.liveInputPower)
     }
 
     private var liveBatteryPowerValue: String {

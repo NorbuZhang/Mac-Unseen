@@ -81,67 +81,8 @@ struct OverviewView: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 16) {
-                Card(
-                    title: "隐藏传感器",
-                    symbol: "sensor",
-                    tint: .purple
-                ) {
-                    FeatureRow(symbol: "move.3d", title: "Bosch BMI286", detail: "加速度计 + 陀螺仪")
-                    FeatureRow(symbol: "laptopcomputer", title: "MagAlpha ma981", detail: "屏幕铰链角度")
-                    FeatureRow(symbol: "sun.max", title: "Redbird ALS", detail: "照度 + 四路光谱")
-                    FeatureRow(symbol: "thermometer", title: "TI TMP114", detail: "独立温度传感器")
-                }
-                Card(
-                    title: "当前状态",
-                    symbol: "checklist",
-                    tint: .green
-                ) {
-                    FeatureRow(
-                        symbol: store.advancedSensorsActive ? "checkmark.circle.fill" : "circle",
-                        title: "高级采集",
-                        detail: store.advancedSensorsActive ? "实时运行" : "尚未启用"
-                    )
-                    FeatureRow(
-                        symbol: store.trackpadDetails.running ? "checkmark.circle.fill" : "circle",
-                        title: "触控板原始数据",
-                        detail: store.trackpadDetails.running ? "实时运行" : "不可用"
-                    )
-                    FeatureRow(
-                        symbol: "battery.75percent",
-                        title: "电池内部数据",
-                        detail: "无需管理员权限"
-                    )
-                    FeatureRow(
-                        symbol: "desktopcomputer",
-                        title: "基础系统数据",
-                        detail: "实时运行"
-                    )
-                }
-            }
             if !store.advancedSensorsActive, let message = store.authorizationMessage {
                 Text(tr(message))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-private struct FeatureRow: View {
-    let symbol: String
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .frame(width: 22)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(tr(title))
-                    .fontWeight(.medium)
-                Text(tr(detail))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

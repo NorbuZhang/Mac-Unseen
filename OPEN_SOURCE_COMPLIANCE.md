@@ -6,21 +6,6 @@ This is an engineering license audit, not legal advice. Commercial release
 should be reviewed by qualified counsel, especially if the product will be
 sold through a store or under restrictive end-user terms.
 
-## 0.2.0 release preparation — 2026-10-24
-
-The release preparation now includes `Mac-Unseen-0.2.0-build-inputs.tar.xz`.
-It supplies the iSMC v0.16.5 source matching commit
-`9b21ebd2d2a5e8e396e64e7142570c955638a600`, its local gosmc source,
-and vendored Go dependencies matching the bundled binary's build metadata.
-The upstream source files were compared byte-for-byte and an offline Go build
-with `-mod=vendor` passed. The archive also contains smartmontools 7.5 source,
-packaging binaries, and the license inputs used by the app build script.
-
-Publish that archive alongside both app ZIPs. It addresses the missing iSMC
-dependency-source material identified in the historical audit below; the archive
-has only been prepared locally until the release is published. This records
-engineering checks, not a new legal conclusion. No third-party licenses change.
-
 ## Executive conclusion
 
 Commercial use and charging money are allowed by every identified
@@ -171,3 +156,7 @@ licensed as code. A genuinely independent rewrite can avoid GPL inheritance,
 but copying GPL implementation, structure, mappings or non-trivial code into
 the rewrite keeps the GPL obligations. Preserve clean-room design notes and
 source provenance if replacing GPL tools with proprietary implementations.
+
+### Bundled fan service
+
+The optional fan service and its socket protocol are adapted from jbforge/mac-fan-control, revision ae14180df9d3c762601e1b0126214049c16a7945 (MIT). The license is shipped in Resources/Licenses/FanControl-MIT.txt. The embedded installer places the service under /Library/PrivilegedHelperTools.

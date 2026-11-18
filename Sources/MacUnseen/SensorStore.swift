@@ -14,6 +14,7 @@ final class SensorStore:
     @Published var selectedSection: DashboardSection? = .overview {
         didSet {
             if oldValue != selectedSection {
+                if selectedSection == .motion { vibrationHistory = []; lastMotionTimestamp = nil }
                 navigation.selectedSection = selectedSection
                 if oldValue == .processes { processSnapshot = ProcessSnapshot() }
             }
@@ -69,6 +70,7 @@ final class SensorStore:
     }
     @Published var trackpadPressureHistory: [Double] = []
     @Published private(set) var expandedTemperatureGroups = Set<String>()
+    private var lastMotionTimestamp: Double?
     @Published var vibrationHistory: [Double] = []
     @Published var targetIMUSampleRate = 100 {
         didSet {
@@ -90,7 +92,6 @@ final class SensorStore:
     @Published private(set) var advancedSensorsActive = false {
         didSet {
             if oldValue != advancedSensorsActive {
-                navigation.advancedSensorsActive = advancedSensorsActive
                 startRefreshing()
             }
         }
@@ -275,13 +276,12 @@ final class SensorStore:
         }
     }
 
-    func stopAdvancedSensors() {
+    private func stopAdvancedSensors() {
         let data = Data("stop".utf8)
         FileManager.default.createFile(
             atPath: advancedStopURL.path,
             contents: data
         )
-        authorizationMessage = "已请求停止高级传感器。"
         isAuthorizing = false
         isConnectingAdvancedSensors = false
         advancedConnectionStartedAt = nil
@@ -528,11 +528,11 @@ final class SensorStore:
                           self.selectedSection == section else { return }
                     self.performance = value
                     if let date = value.sampledAt {
-                        self.memoryPressureHistory.append(rawLevel: value.memory.pressure, at: date)
+                        self.memoryPressureHistory.append(rawLevel: value.memory.pressure, percent: value.memory.pressurePercent, at: date)
                     }
                     if let cpu = value.cpu {
                         self.cpuHistory.append(cpu)
-                        if self.cpuHistory.count > 60 { self.cpuHistory.removeFirst(self.cpuHistory.count - 60) }
+                        if self.cpuHistory.count > HistoryCapacity.cpu { self.cpuHistory.removeFirst(self.cpuHistory.count - HistoryCapacity.cpu) }
                     }
                 }
                 try? await Task.sleep(for: .seconds(interval))
@@ -665,10 +665,11 @@ final class SensorStore:
         case .motion:
             readAdvancedSnapshot(publishData: true)
             readAdvanced = true
-            Self.appendHistory(
-                advanced.motion.vibrationRMS,
-                to: &vibrationHistory
-            )
+            if advancedSensorsActive, let timestamp = advanced.motion.accelerometer?.timestamp,
+               timestamp != lastMotionTimestamp {
+                lastMotionTimestamp = timestamp
+                Self.appendHistory(advanced.motion.vibrationRMS, to: &vibrationHistory)
+            }
         case .environment:
             readAdvancedSnapshot(publishData: true)
             readAdvanced = true
@@ -744,8 +745,8 @@ final class SensorStore:
         to history: inout [Double]
     ) {
         history.append(value)
-        if history.count > 180 {
-            history.removeFirst(history.count - 180)
+        if history.count > HistoryCapacity.sensor {
+            history.removeFirst(history.count - HistoryCapacity.sensor)
         }
     }
 
@@ -1008,6 +1009,7 @@ final class SensorStore:
 
         let script = "do shell script \(appleScriptLiteral(command)) with administrator privileges"
         let process = Process()
+        process.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
         let output = Pipe()
@@ -1106,6 +1108,7 @@ final class SensorStore:
 
     nonisolated private static func developerToolsAvailable() -> Bool {
         let process = Process()
+        process.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
         process.arguments = ["-p"]
         process.standardOutput = Pipe()
@@ -1124,6 +1127,7 @@ final class SensorStore:
             return false
         }
         let process = Process()
+        process.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = [
             "-c",

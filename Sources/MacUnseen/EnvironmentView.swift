@@ -131,7 +131,7 @@ struct EnvironmentView: View {
                 AdvancedAccessCard()
             }
         }
-        .background(AccordionWindowReader { accordion.window = $0 })
+        .background(WindowReader { accordion.window = $0 })
         .sheet(isPresented: $showingAccordion) {
             AccordionSettingsView(controller: accordion, sensorReady: accordionSensorReady)
         }
@@ -249,7 +249,7 @@ struct EnvironmentTopCardLayout: Layout {
     }
 }
 
-private struct LidAngleDiagram: View {
+struct LidAngleDiagram: View {
     let angle: Double
 
     var body: some View {

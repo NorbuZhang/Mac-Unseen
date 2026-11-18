@@ -20,7 +20,7 @@ struct PerformanceSummary: View {
             Metric(name: "磁盘已用", value: store.system.diskTotal > 0 ? bytes(store.system.diskUsed) : "—",
                    detail: tr("总计") + " " + (store.system.diskTotal > 0 ? bytes(store.system.diskTotal) : "—")),
             Metric(name: "已开机时间", value: formatDuration(store.system.uptime)),
-        ], tint: .blue, minimumWidth: 135)
+        ], tint: .blue, minimumWidth: 152, uniformValueSize: 19)
     }
 }
 
@@ -56,6 +56,7 @@ struct PerformanceView: View {
                 MetricGrid(metrics: zip(["1 分钟负载", "5 分钟负载", "15 分钟负载"], reading.loadAverages).map {
                     Metric(name: $0, value: format($1, digits: 2))
                 }, tint: .blue)
+            Text(tr("负载是可运行任务数的时间平均值。1、5、15 分钟分别反映短期到长期趋势。例如 1 分钟值高于 15 分钟值，表示近期负载上升。")).font(.caption).foregroundStyle(.secondary)
                 SoftDivider()
                 ProcessorSpecificationsView(identity: store.systemIdentity).equatable()
             }
@@ -103,7 +104,13 @@ private struct CPUHistory: View {
             }
             var path = Path()
             for (index, value) in values.enumerated() {
-                let point = CGPoint(x: size.width * Double(index) / 59, y: size.height * (1 - min(100, max(0, value)) / 100))
+                let point = CGPoint(
+                    x: HistoryAxis.x(index: index, count: values.count, capacity: HistoryCapacity.cpu, width: size.width),
+                    y: 2 + (size.height - 4) * (1 - min(100, max(0, value)) / 100)
+                )
+                if values.count == 1 {
+                    context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)), with: .color(.blue))
+                }
                 if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
             }
             context.stroke(path, with: .color(.blue), lineWidth: 2)
@@ -169,6 +176,7 @@ struct ProcessesView: View {
                                     } label: {
                                         HStack(spacing: 7) {
                                             Image(systemName: expandedApps.contains(app.id) ? "chevron.down" : "chevron.right").font(.caption2)
+                                            if let member = app.processes.first { SoftwareIcon(process: member) }
                                             Text(app.name).lineLimit(1).truncationMode(.middle)
                                             Spacer(minLength: 0)
                                         }.contentShape(Rectangle())
@@ -205,6 +213,7 @@ struct ProcessesView: View {
     }
     private func processRow(_ process: ProcessReading) -> some View {
         HStack(spacing: 10) {
+            SoftwareIcon(process: process)
             Text(process.name).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
             Text((byApplication ? "PID " : "") + String(process.id.pid)).foregroundStyle(.secondary).frame(width: 65, alignment: .trailing)
             Text(percentage(process.cpu)).frame(width: 90, alignment: .trailing)
